@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Toysmar — test</title>
+<link rel="stylesheet" href="../assets/app.css">
+<script>
+  // Giriş yapmış kabul edilen test kullanıcısı.
+  // ?as=e-posta ile başka bir kullanıcıyla açılabilir, ?as=yok ile çıkış yapılmış gibi.
+  (function () {
+    var as = new URLSearchParams(location.search).get("as");
+    if (as === "yok") { window.__MOCK_USER__ = null; return; }
+    var mail = as || "yonetici@toysmar.test";
+    window.__MOCK_USER__ = {
+      email: mail,
+      displayName: mail === "yonetici@toysmar.test" ? "Test Yöneticisi" : mail.split("@")[0],
+      photoURL: "",
+      emailVerified: true
+    };
+  })();
+</script>
+<script src="mock-firebase.js"></script>
+<script>
+  // Yapılandırma kontrolünü geçmek için sahte değerler.
+  window.__MOCK_DB__["allowed/yonetici@toysmar.test"] = { name: "Test Yöneticisi", role: "yonetici" };
+</script>
+</head>
+<body>
+<div id="root"><div class="gate"><div class="gate-card"><div class="gate-mark">TY</div><h1>Test</h1><p>Yükleniyor…</p></div></div></div>
+<div id="modal-root"></div>
+<div id="toast" hidden></div>
+<script type="module">
+  // config.js'i test için geçersiz kılmadan çalıştırabilmek adına
+  // gerçek app.js yüklenir; fb.js zaten __TOYSMAR_MOCK__ varsa onu kullanır.
+  import("../js/app.js");
+</script>
+</body>
+</html>

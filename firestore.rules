@@ -1,0 +1,65 @@
+rules_version = '2';
+
+// Toysmar Proje Takip — kalıcı yetki kuralları.
+// Bu dosya bir kez yayınlanır ve bir daha değiştirilmesi gerekmez:
+// kimin gireceği kurallarda değil, "allowed" koleksiyonunda tutulur;
+// yeni personel uygulamanın Ayarlar ekranından eklenir.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- yardımcılar -------------------------------------------------
+    function signedIn() {
+      return request.auth != null
+          && request.auth.token.email != null
+          && request.auth.token.email_verified == true;
+    }
+    function email()    { return request.auth.token.email.lower(); }
+    function userRef()  { return /databases/$(database)/documents/allowed/$(email()); }
+
+    // Yetkili = Google ile girmiş VE "allowed" listesinde kaydı olan kişi.
+    function isAllowed() { return signedIn() && exists(userRef()); }
+
+    // Yönetici = yetkili VE rolü "yonetici" olan kişi.
+    function isAdmin()   { return isAllowed() && get(userRef()).data.role == 'yonetici'; }
+
+    // --- kimler girebilir --------------------------------------------
+    // Herkes listeyi okuyabilir (ekranlarda isim göstermek için),
+    // yalnızca yönetici değiştirebilir.
+    match /allowed/{userEmail} {
+      allow read:                 if isAllowed();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // --- katalog, departmanlar, personel ------------------------------
+    match /config/{doc} {
+      allow read:  if isAllowed();
+      allow write: if isAdmin();
+    }
+
+    // --- projeler ------------------------------------------------------
+    // Silme yalnızca yöneticide; uygulama normalde arşivler, silmez.
+    match /projects/{doc} {
+      allow read:           if isAllowed();
+      allow create, update: if isAllowed();
+      allow delete:         if isAdmin();
+    }
+
+    // --- iş emirleri ----------------------------------------------------
+    match /tasks/{doc} {
+      allow read:           if isAllowed();
+      allow create, update: if isAllowed();
+      allow delete:         if isAdmin();
+    }
+
+    // --- değişiklik günlüğü ---------------------------------------------
+    // Salt ekleme: yazılan bir kayıt hiç kimse tarafından değiştirilemez
+    // veya silinemez. "Veri kaybolmasın" güvencesi burada.
+    match /log/{doc} {
+      allow read:   if isAllowed();
+      allow create: if isAllowed();
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}
