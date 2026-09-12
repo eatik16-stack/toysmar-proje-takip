@@ -4,7 +4,7 @@ Toysmar Oyun Grupları üretim planlama için proje yönetim ve takip uygulamas�
 Projenin kapsamı 33 adımlık katalogdan seçilir, seçilen her adım bir personele
 **iş emri** olarak atanır, termin ve tamamlanma takip edilir.
 
-**Canlı adres:** GitHub Pages
+**Canlı adres:** https://eatik16-stack.github.io/toysmar-proje-takip/
 **Giriş:** yalnızca yetkilendirilmiş Google hesapları
 
 ---
@@ -80,6 +80,18 @@ ilk personel kaydını oluşturur.
 
 ## Revize akışı
 
-Değişiklik Claude'a yazılır; Claude kodu düzenler, `node test/run.mjs` ile
-doğrular ve bu depoya gönderir. GitHub Pages birkaç dakika içinde yayına alır.
-Elle dosya kopyalama yoktur.
+Kaynağın iki kopyası var: bilgisayardaki `C:\Toysmar` klasörü ve bu depo.
+İkisini de Claude güncel tutar, elle dosya kopyalama ya da yükleme yoktur.
+
+1. Değişiklik Claude'a yazılır.
+2. Claude `C:\Toysmar` klasöründeki dosyaları düzenler.
+3. `node test/run.mjs` çalıştırılır — testler geçmeden sonraki adıma geçilmez.
+   Davranış değişiyorsa o davranışın testi de eklenir.
+4. Değişen dosyalar `C:\Toysmar` klasörüne geri yazılır. Klasördeki dosya
+   aradan sen değiştirdiysen üzerine yazılmaz, önce haber verilir.
+5. Claude, Claude uygulamasının tarayıcı panelinden bu depoya commit atar;
+   GitHub Pages birkaç dakika içinde yayına alır.
+
+5. adım için panelde GitHub oturumunun açık olması yeterlidir; oturum panelde
+kalıcıdır. Depo Claude oturumuna doğrudan bağlanabilirse bu adım commit'i
+doğrudan GitHub API ile atmaya döner, akışın geri kalanı aynı kalır.
