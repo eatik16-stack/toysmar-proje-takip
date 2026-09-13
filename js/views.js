@@ -608,6 +608,10 @@ export function viewRequests(S) {
       '<div class="muted" style="font-size:11.5px">' + esc(r.id) + ' · ' + esc(fmtDateTime(r.at)) + '</div>' +
       '<div class="rq-gorev"><span class="eyebrow">Görevi</span>' + esc(r.gorev || "—") + '</div>' +
       '</div><div class="rq-act">' +
+      '<select class="inp-sm rq-role" data-reqdept="' + esc(r.id) + '" aria-label="Departman">' +
+      data.depts.map(function (d) {
+        return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>';
+      }).join("") + '</select>' +
       '<select class="inp-sm rq-role" data-reqrole="' + esc(r.id) + '" aria-label="Verilecek rol">' +
       ROLE_ORDER.map(function (k) {
         return '<option value="' + esc(k) + '"' + (k === "personel" ? " selected" : "") + '>' +

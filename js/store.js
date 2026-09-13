@@ -204,20 +204,29 @@ export function pendingRequests() {
     .sort(function (a, b) { return String(a.at || "").localeCompare(String(b.at || "")); });
 }
 
-// Talebi onaylar: personel kaydı yoksa açar, seçilen rolle giriş yetkisi verir.
-export async function approveRequest(req, role) {
+// Talebi onaylar: personel kaydı yoksa açar, seçilen rol ve departmanla
+// giriş yetkisi verir. Departman önemli — şefin kapsamı ve iş emri
+// atamaları bunun üzerinden yürüyor.
+export async function approveRequest(req, role, dept) {
   const f = await fb();
   const key = String(req.email || req.id || "").trim().toLowerCase();
   if (!key) throw new Error("Talepte e-posta yok.");
+  const deptId = dept || (data.depts[0] || {}).id || "";
 
   let person = data.people.filter(function (p) {
     return String(p.email || "").toLowerCase() === key;
   })[0];
 
   if (!person) {
-    person = { id: uid(), name: req.name || key, dept: (data.depts[0] || {}).id || "", email: key };
+    person = { id: uid(), name: req.name || key, dept: deptId, email: key };
     await saveOrg(data.depts, data.people.concat([person]),
       "personel eklendi (talep onayı): " + person.name);
+  } else if (person.dept !== deptId) {
+    const moved = Object.assign({}, person, { dept: deptId });
+    await saveOrg(data.depts, data.people.map(function (p) {
+      return p.id === moved.id ? moved : p;
+    }), "personel departmanı güncellendi: " + moved.name);
+    person = moved;
   }
 
   await f.setDoc(f.doc(f.db, "allowed", key), {

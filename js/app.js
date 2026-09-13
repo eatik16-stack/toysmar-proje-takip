@@ -635,10 +635,12 @@ document.addEventListener("click", async function (e) {
     const req = data.requests.filter(function (x) { return x.id === id; })[0];
     if (!req) return;
     const sel = document.querySelector('[data-reqrole="' + id + '"]');
+    const dsel = document.querySelector('[data-reqdept="' + id + '"]');
     const role = (sel && sel.value) || "personel";
+    const dept = dsel && dsel.value;
     el.disabled = true;
-    await guard(store.approveRequest(req, role));
-    toast((req.name || id) + " · " + roleDef(role).label + " olarak eklendi.");
+    await guard(store.approveRequest(req, role, dept));
+    toast((req.name || id) + " · " + roleDef(role).label + " · " + store.deptName(dept) + " olarak eklendi.");
     render();
     return;
   }
