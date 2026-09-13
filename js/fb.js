@@ -37,6 +37,12 @@ export async function fb() {
     signInWithPopup: authMod.signInWithPopup,
     signOut: authMod.signOut,
     onAuthStateChanged: authMod.onAuthStateChanged,
+    createUserWithEmailAndPassword: authMod.createUserWithEmailAndPassword,
+    signInWithEmailAndPassword: authMod.signInWithEmailAndPassword,
+    sendEmailVerification: authMod.sendEmailVerification,
+    sendPasswordResetEmail: authMod.sendPasswordResetEmail,
+    updateProfile: authMod.updateProfile,
+    reload: authMod.reload,
     // firestore
     doc: fsMod.doc,
     collection: fsMod.collection,

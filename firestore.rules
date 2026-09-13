@@ -2,13 +2,16 @@ rules_version = '2';
 
 // Toysmar Proje Takip — kalıcı yetki kuralları.
 // Bu dosya bir kez yayınlanır ve bir daha değiştirilmesi gerekmez:
-// kimin gireceği kurallarda değil, "allowed" koleksiyonunda tutulur;
-// yeni personel uygulamanın Ayarlar ekranından eklenir.
+// kimin gireceği kurallarda değil, "allowed" koleksiyonunda tutulur.
+// Roller js/roles.js dosyasındakilerle birebir aynı olmalı:
+// yonetici, planlamaci, sef, personel.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
     // --- yardımcılar -------------------------------------------------
+    // E-posta ile şifreyle açılan hesaplar doğrulanana kadar giremez;
+    // Google ile gelen adresler zaten doğrulanmış sayılır.
     function signedIn() {
       return request.auth != null
           && request.auth.token.email != null
@@ -17,18 +20,40 @@ service cloud.firestore {
     function email()    { return request.auth.token.email.lower(); }
     function userRef()  { return /databases/$(database)/documents/allowed/$(email()); }
 
-    // Yetkili = Google ile girmiş VE "allowed" listesinde kaydı olan kişi.
+    // Yetkili = girmiş VE "allowed" listesinde kaydı olan kişi.
     function isAllowed() { return signedIn() && exists(userRef()); }
 
-    // Yönetici = yetkili VE rolü "yonetici" olan kişi.
-    function isAdmin()   { return isAllowed() && get(userRef()).data.role == 'yonetici'; }
+    function me()          { return get(userRef()).data; }
+    function myRole()      { return me().get('role', 'personel'); }
+    function myPersonId()  { return me().get('personId', ''); }
+    function myDept()      { return me().get('dept', ''); }
+
+    function hasRole(roles) { return isAllowed() && myRole() in roles; }
+
+    function isAdmin()  { return hasRole(['yonetici']); }
+    // Proje açan, atama ve termin değiştiren roller.
+    function canPlan()  { return hasRole(['yonetici', 'planlamaci']); }
 
     // --- kimler girebilir --------------------------------------------
     // Herkes listeyi okuyabilir (ekranlarda isim göstermek için),
     // yalnızca yönetici değiştirebilir.
     match /allowed/{userEmail} {
-      allow read:                 if isAllowed();
+      allow read:                   if isAllowed();
       allow create, update, delete: if isAdmin();
+    }
+
+    // --- erişim talepleri ---------------------------------------------
+    // Kişi kendi talebini yalnızca bir kez bırakır: create sadece belge
+    // yokken çalışır, update yalnızca yöneticide. Reddedilen bir talep
+    // bu yüzden kendiliğinden tekrar açılamaz.
+    match /requests/{userEmail} {
+      allow read:   if isAdmin() || (signedIn() && email() == userEmail);
+      allow create: if signedIn()
+                    && email() == userEmail
+                    && !exists(userRef())
+                    && request.resource.data.email == userEmail
+                    && request.resource.data.status == 'bekliyor';
+      allow update, delete: if isAdmin();
     }
 
     // --- katalog, departmanlar, personel ------------------------------
@@ -41,15 +66,22 @@ service cloud.firestore {
     // Silme yalnızca yöneticide; uygulama normalde arşivler, silmez.
     match /projects/{doc} {
       allow read:           if isAllowed();
-      allow create, update: if isAllowed();
+      allow create, update: if canPlan();
       allow delete:         if isAdmin();
     }
 
     // --- iş emirleri ----------------------------------------------------
+    // Planlayan roller hepsine dokunur; şef kendi departmanının işlerine,
+    // personel yalnızca kendisine atanmış işe.
     match /tasks/{doc} {
-      allow read:           if isAllowed();
-      allow create, update: if isAllowed();
-      allow delete:         if isAdmin();
+      allow read:   if isAllowed();
+      allow create: if canPlan();
+      allow update: if canPlan()
+                    || (isAllowed() && myPersonId() != ''
+                        && resource.data.get('assignee', '') == myPersonId())
+                    || (hasRole(['sef']) && myDept() != ''
+                        && resource.data.get('dept', '') == myDept());
+      allow delete: if isAdmin();
     }
 
     // --- değişiklik günlüğü ---------------------------------------------

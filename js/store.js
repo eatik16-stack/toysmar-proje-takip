@@ -3,12 +3,14 @@
 // salt eklemedir (kurallarda update/delete kapalı), yani geçmiş kaybolmaz.
 
 import { fb } from "./fb.js";
-import { session, myEmail, myName } from "./auth.js";
+import { myEmail, myName, myRole, isAdmin, canPlan } from "./auth.js";
+import { uid } from "./util.js";
 
 export const data = {
   groups: [], steps: [],          // config/catalog
   depts: [],  people: [],         // config/org
   members: [],                    // allowed/*  (giriş yetkisi olanlar)
+  requests: [],                   // requests/* (bekleyen erişim talepleri)
   projects: [], tasks: [],
   loaded: { catalog: false, org: false, members: false, projects: false, tasks: false }
 };
@@ -53,6 +55,16 @@ export async function subscribeAll(onChange, onError) {
     data.members = rowsOf(s);
     data.loaded.members = true; onChange();
   }, fail("giriş yetkileri")));
+
+  // Talepleri yalnızca yönetici okuyabilir; diğer rollerde kurallar reddeder.
+  if (isAdmin()) {
+    unsubs.push(f.onSnapshot(f.collection(f.db, "requests"), function (s) {
+      data.requests = rowsOf(s);
+      onChange();
+    }, fail("erişim talepleri")));
+  } else {
+    data.requests = [];
+  }
 
   unsubs.push(f.onSnapshot(f.collection(f.db, "projects"), function (s) {
     data.projects = rowsOf(s);
@@ -185,6 +197,52 @@ export async function removeMember(email) {
   writeLog("yetki-al", key, "giriş yetkisi kaldırıldı");
 }
 
+/* ---------------- erişim talepleri ---------------- */
+
+export function pendingRequests() {
+  return data.requests.filter(function (r) { return (r.status || "bekliyor") === "bekliyor"; })
+    .sort(function (a, b) { return String(a.at || "").localeCompare(String(b.at || "")); });
+}
+
+// Talebi onaylar: personel kaydı yoksa açar, seçilen rolle giriş yetkisi verir.
+export async function approveRequest(req, role) {
+  const f = await fb();
+  const key = String(req.email || req.id || "").trim().toLowerCase();
+  if (!key) throw new Error("Talepte e-posta yok.");
+
+  let person = data.people.filter(function (p) {
+    return String(p.email || "").toLowerCase() === key;
+  })[0];
+
+  if (!person) {
+    person = { id: uid(), name: req.name || key, dept: (data.depts[0] || {}).id || "", email: key };
+    await saveOrg(data.depts, data.people.concat([person]),
+      "personel eklendi (talep onayı): " + person.name);
+  }
+
+  await f.setDoc(f.doc(f.db, "allowed", key), {
+    name: req.name || person.name,
+    role: role,
+    dept: person.dept || "",
+    personId: person.id
+  });
+  await f.updateDoc(f.doc(f.db, "requests", key), {
+    status: "onaylandi", role: role,
+    decidedAt: new Date().toISOString(), decidedBy: myEmail()
+  });
+  writeLog("talep-onay", key, (req.name || "") + " · " + role);
+}
+
+export async function rejectRequest(req) {
+  const f = await fb();
+  const key = String(req.email || req.id || "").trim().toLowerCase();
+  await f.updateDoc(f.doc(f.db, "requests", key), {
+    status: "reddedildi",
+    decidedAt: new Date().toISOString(), decidedBy: myEmail()
+  });
+  writeLog("talep-red", key, req.name || "");
+}
+
 /* ---------------- türetilmiş ---------------- */
 
 export function projTasks(pid) {
@@ -224,8 +282,12 @@ export function mePerson() {
   return null;
 }
 
+// Kimin hangi iş emrine dokunabileceği rolden çıkar:
+// planlayan roller hepsine, şef kendi departmanına, personel kendi işine.
 export function canEditTask(t) {
-  if (session.member && session.member.role === "yonetici") return true;
+  if (canPlan()) return true;
   const p = mePerson();
-  return !!(p && t.assignee === p.id);
+  if (!p) return false;
+  if (myRole() === "sef") return !!(p.dept && t.dept === p.dept);
+  return t.assignee === p.id;
 }

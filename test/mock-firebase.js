@@ -6,25 +6,50 @@
 (function () {
   // Sayfa yenilense de veri kalsın (giriş/çıkış senaryolarını test edebilmek için).
   const KEY = "toysmar.mockdb";
-  let seeded = {};
+  const UKEY = "toysmar.mockusers";
+  let seeded = {}, seededUsers = {};
   try { seeded = JSON.parse(sessionStorage.getItem(KEY) || "{}"); } catch (e) {}
+  try { seededUsers = JSON.parse(sessionStorage.getItem(UKEY) || "{}"); } catch (e) {}
 
   const DB = seeded;          // "koleksiyon/kimlik" -> gövde
+  const USERS = seededUsers;  // e-posta -> { password, displayName, emailVerified }
   const docListeners = [];    // { path, cb }
   const colListeners = [];    // { col, cb }
+  const auth = { __mock: true, currentUser: null };
   let authCb = null;
-  let currentUser = null;
 
   function persist() {
     try { sessionStorage.setItem(KEY, JSON.stringify(DB)); } catch (e) {}
   }
+  function persistUsers() {
+    try { sessionStorage.setItem(UKEY, JSON.stringify(USERS)); } catch (e) {}
+  }
 
   window.__MOCK_DB__ = DB;
+  window.__MOCK_USERS__ = USERS;
+  window.__MOCK_MAILS__ = [];     // gönderilmiş sayılan e-postalar
   window.__MOCK_WRITES__ = [];
   window.__MOCK_RESET__ = function () {
     Object.keys(DB).forEach(function (k) { delete DB[k]; });
     persist();
   };
+  // Kullanıcının doğrulama bağlantısına tıklamasını taklit eder.
+  window.__MOCK_VERIFY__ = function (mail) {
+    const rec = USERS[String(mail || "").toLowerCase()];
+    if (rec) { rec.emailVerified = true; persistUsers(); }
+  };
+
+  function userObj(key) {
+    const rec = USERS[key] || {};
+    return {
+      email: key, displayName: rec.displayName || "",
+      photoURL: "", emailVerified: !!rec.emailVerified
+    };
+  }
+  function setUser(u) {
+    auth.currentUser = u;
+    if (authCb) authCb(u);
+  }
 
   function deepFreeze(o) {
     if (o && typeof o === "object" && !Object.isFrozen(o)) {
@@ -61,20 +86,61 @@
 
   const api = {
     db: { __mock: true },
-    auth: { __mock: true },
+    auth: auth,
 
     /* ---- auth ---- */
     GoogleAuthProvider: function () { this.setCustomParameters = function () {}; },
     signInWithPopup: function () {
-      currentUser = window.__MOCK_USER__ || null;
-      if (authCb) authCb(currentUser);
-      return Promise.resolve({ user: currentUser });
+      setUser(window.__MOCK_GOOGLE_USER__ || window.__MOCK_USER__ || null);
+      return Promise.resolve({ user: auth.currentUser });
     },
-    signOut: function () { currentUser = null; if (authCb) authCb(null); return Promise.resolve(); },
+    signOut: function () { setUser(null); return Promise.resolve(); },
     onAuthStateChanged: function (a, cb) {
       authCb = cb;
-      setTimeout(function () { cb(window.__MOCK_USER__ || null); }, 0);
+      setTimeout(function () {
+        auth.currentUser = window.__MOCK_USER__ || null;
+        cb(auth.currentUser);
+      }, 0);
       return function () {};
+    },
+
+    createUserWithEmailAndPassword: function (a, mail, pass) {
+      const key = String(mail || "").toLowerCase();
+      if (USERS[key]) return Promise.reject({ code: "auth/email-already-in-use" });
+      if (!pass || pass.length < 6) return Promise.reject({ code: "auth/weak-password" });
+      USERS[key] = { password: pass, displayName: "", emailVerified: false };
+      persistUsers();
+      setUser(userObj(key));
+      return Promise.resolve({ user: auth.currentUser });
+    },
+    signInWithEmailAndPassword: function (a, mail, pass) {
+      const key = String(mail || "").toLowerCase();
+      const rec = USERS[key];
+      if (!rec) return Promise.reject({ code: "auth/user-not-found" });
+      if (rec.password !== pass) return Promise.reject({ code: "auth/wrong-password" });
+      setUser(userObj(key));
+      return Promise.resolve({ user: auth.currentUser });
+    },
+    sendEmailVerification: function (u) {
+      window.__MOCK_MAILS__.push(["dogrulama", u && u.email]);
+      return Promise.resolve();
+    },
+    sendPasswordResetEmail: function (a, mail) {
+      const key = String(mail || "").toLowerCase();
+      if (!USERS[key]) return Promise.reject({ code: "auth/user-not-found" });
+      window.__MOCK_MAILS__.push(["sifirlama", key]);
+      return Promise.resolve();
+    },
+    updateProfile: function (u, patch) {
+      const key = String((u && u.email) || "").toLowerCase();
+      if (USERS[key]) { USERS[key].displayName = (patch && patch.displayName) || ""; persistUsers(); }
+      if (u) u.displayName = (patch && patch.displayName) || "";
+      return Promise.resolve();
+    },
+    reload: function (u) {
+      const rec = USERS[String((u && u.email) || "").toLowerCase()];
+      if (rec && u) u.emailVerified = !!rec.emailVerified;
+      return Promise.resolve();
     },
 
     /* ---- firestore ---- */

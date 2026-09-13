@@ -5,9 +5,11 @@ import {
   needOf, doneOf, shortOf, taskState, stateLabel, dotClass
 } from "./util.js";
 import {
-  data, projTasks, progress, activeProjects, deptName, personName, mePerson
+  data, projTasks, progress, activeProjects, deptName, personName, mePerson,
+  canEditTask, pendingRequests
 } from "./store.js";
-import { session, isAdmin, myName, myEmail } from "./auth.js";
+import { session, isAdmin, canPlan, canSee, myRole, myName, myEmail } from "./auth.js";
+import { ROLE_ORDER, roleDef, roleLabel } from "./roles.js";
 
 /* ================= ortak parçalar ================= */
 
@@ -50,19 +52,19 @@ export function delBtn(S, id, label, kind) {
     esc(kind + ":" + id) + '">' + (armed ? "Emin misiniz?" : esc(label)) + '</button>';
 }
 
-export function qtyCell(t, admin, mine, need, made) {
+export function qtyCell(t, plan, mine, need, made) {
   const pct = need > 0 ? Math.min(100, Math.round(made / need * 100)) : (made > 0 ? 100 : 0);
   const ok = need > 0 && made >= need;
   let h = '<div class="qcell"><div class="qrow">' +
     '<input class="inp-sm mono qin" type="text" inputmode="decimal" value="' + esc(t.qty == null ? "" : t.qty) + '" ' +
-      'data-f="qty" aria-label="Gereken adet" title="Gereken" placeholder="—"' + (admin ? "" : " disabled") + '>' +
+      'data-f="qty" aria-label="Gereken adet" title="Gereken" placeholder="—"' + (plan ? "" : " disabled") + '>' +
     '<span class="qsep" aria-hidden="true">/</span>' +
     '<input class="inp-sm mono qin' + (ok ? " qin-ok" : (made > 0 ? " qin-short" : "")) + '" type="text" inputmode="decimal" ' +
       'value="' + esc(t.doneQty == null ? "" : t.doneQty) + '" data-f="doneQty" aria-label="Yapılan adet" ' +
-      'title="Yapılan" placeholder="0"' + ((admin || mine) ? "" : " disabled") + '></div>';
+      'title="Yapılan" placeholder="0"' + ((plan || mine) ? "" : " disabled") + '></div>';
   if (need > 0) {
     h += '<div class="qinfo"><div class="qbar"><div class="qfill' + (ok ? " is-ok" : "") + '" style="width:' + pct + '%"></div></div>';
-    if (!ok && (admin || mine) && t.status !== "tamam")
+    if (!ok && (plan || mine) && t.status !== "tamam")
       h += '<button class="qall" data-qall="' + esc(t.id) + '" title="Yapılanı gerekene eşitle">tümü</button>';
     else h += '<span class="qunit">' + esc(t.unit || "adet") + '</span>';
     h += '</div>';
@@ -71,9 +73,8 @@ export function qtyCell(t, admin, mine, need, made) {
 }
 
 export function taskRow(t) {
-  const admin = isAdmin();
-  const p = mePerson();
-  const mine = !!(p && t.assignee === p.id);
+  const plan = canPlan();
+  const mine = canEditTask(t);
   const st = taskState(t), done = t.status === "tamam";
   const need = needOf(t), made = doneOf(t), short = shortOf(t);
 
@@ -90,23 +91,23 @@ export function taskRow(t) {
   if (sub.length) h += '<div class="tspec">' + sub.join(" · ") + '</div>';
   h += '</div>';
 
-  h += '<div>' + (t.type === "qty" ? qtyCell(t, admin, mine, need, made) : '<span class="muted">—</span>') + '</div>';
+  h += '<div>' + (t.type === "qty" ? qtyCell(t, plan, mine, need, made) : '<span class="muted">—</span>') + '</div>';
 
-  h += '<div>' + selectEl("dept", t.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; }), !admin) + '</div>';
+  h += '<div>' + selectEl("dept", t.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; }), !plan) + '</div>';
   h += '<div>' + selectEl("assignee", t.assignee,
     data.people.filter(function (x) { return !t.dept || x.dept === t.dept; })
-      .map(function (x) { return { v: x.id, l: x.name }; }), !admin, "Atanmadı") + '</div>';
+      .map(function (x) { return { v: x.id, l: x.name }; }), !plan, "Atanmadı") + '</div>';
   h += '<div><input class="inp-sm inp-date" type="date" value="' + esc(t.dueDate || "") +
-    '" data-f="dueDate" aria-label="Termin"' + (admin ? "" : " disabled") + '></div>';
+    '" data-f="dueDate" aria-label="Termin"' + (plan ? "" : " disabled") + '></div>';
 
-  const canToggle = admin || mine;
+  const canToggle = plan || mine;
   h += '<div class="c-act">';
   if (!canToggle) h += '<span class="st st-' + st + '">' + esc(stateLabel(st)) + '</span>';
   else if (done) h += '<button class="btn btn-sm" data-toggle="' + esc(t.id) + '">Geri al</button>';
   else if (short > 0) {
     h += '<button class="btn btn-sm btn-block" data-toggle="' + esc(t.id) + '" title="' +
       esc(need + " " + (t.unit || "adet") + " gerekiyor, " + made + " girildi") + '">Tamamla</button>';
-    if (admin) h += '<button class="btn btn-sm btn-ghost btn-xs" data-shortclose="' + esc(t.id) + '">Eksik kapat</button>';
+    if (plan) h += '<button class="btn btn-sm btn-ghost btn-xs" data-shortclose="' + esc(t.id) + '">Eksik kapat</button>';
   } else h += '<button class="btn btn-sm btn-pri" data-toggle="' + esc(t.id) + '">Tamamla</button>';
   h += '</div></div>';
   return h;
@@ -119,14 +120,15 @@ export function navItems(S) {
   const p = mePerson();
   if (p) mineOpen = data.tasks.filter(function (t) { return t.assignee === p.id && t.status !== "tamam"; }).length;
   const items = [
-    { id: "panel", ico: "◧", label: "Panel", admin: true },
+    { id: "panel", ico: "◧", label: "Panel" },
     { id: "projeler", ico: "▦", label: "Projeler", count: activeProjects().length },
     { id: "isler", ico: "✓", label: "İşlerim", count: mineOpen || null },
-    { id: "yeni", ico: "＋", label: "Yeni Proje", admin: true },
-    { id: "kayitlar", ico: "≡", label: "Kayıtlar", admin: true },
-    { id: "ayarlar", ico: "⚙", label: "Ayarlar", admin: true }
+    { id: "yeni", ico: "＋", label: "Yeni Proje" },
+    { id: "talepler", ico: "◎", label: "Talepler", count: pendingRequests().length || null },
+    { id: "kayitlar", ico: "≡", label: "Kayıtlar" },
+    { id: "ayarlar", ico: "⚙", label: "Ayarlar" }
   ];
-  return items.filter(function (i) { return !i.admin || isAdmin(); });
+  return items.filter(function (i) { return canSee(i.id); });
 }
 
 export function navHtml(S) {
@@ -140,7 +142,7 @@ export function navHtml(S) {
 export function meCardHtml() {
   const nm = myName(), photo = session.user && session.user.photo;
   const initials = nm.trim().split(/\s+/).slice(0, 2).map(function (w) { return w[0] || ""; }).join("").toUpperCase();
-  const role = isAdmin() ? "Yönetici" : "Personel";
+  const role = roleLabel(myRole());
   const p = mePerson();
   return '<div class="mecard">' +
     (photo ? '<img class="avatar" src="' + esc(photo) + '" alt="">' : '<div class="avatar">' + esc(initials) + '</div>') +
@@ -262,7 +264,7 @@ export function viewProjects(S) {
     '<button class="btn btn-sm' + (S.projView === "liste" ? " btn-pri" : "") + '" data-projview="liste">Liste</button>' +
     '<button class="btn btn-sm' + (S.projView === "matris" ? " btn-pri" : "") + '" data-projview="matris">Matris</button>' +
     '<button class="btn btn-sm' + (S.showArchived ? " btn-pri" : "") + '" data-togglearch="1">Arşiv</button>' +
-    (isAdmin() ? '<button class="btn btn-pri btn-sm" data-nav="yeni">Yeni proje</button>' : '') + '</div></div>';
+    (canSee("yeni") ? '<button class="btn btn-pri btn-sm" data-nav="yeni">Yeni proje</button>' : '') + '</div></div>';
 
   if (!list.length) {
     return h + '<div class="panel"><div class="empty"><h3>' +
@@ -273,7 +275,7 @@ export function viewProjects(S) {
 
   h += '<div class="panel"><div class="tw"><table><thead><tr>' +
     '<th>Proje</th><th>Müşteri</th><th>Panel</th><th>Tema</th><th>Teslim</th><th>İlerleme</th><th>Adım</th>' +
-    (isAdmin() ? '<th></th>' : '') + '</tr></thead><tbody>';
+    (canPlan() ? '<th></th>' : '') + '</tr></thead><tbody>';
   list.sort(function (a, b) {
     return String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999"));
   }).forEach(function (p) {
@@ -289,7 +291,7 @@ export function viewProjects(S) {
         (d !== null && d < 0 && p.status !== "tamam" && !p.archived ? ' <span style="color:var(--late)">geç</span>' : '') + '</td>' +
       '<td>' + progBar(pr.pct) + '</td>' +
       '<td class="mono muted">' + pr.done + '/' + pr.total + '</td>' +
-      (isAdmin() ? '<td style="text-align:right">' +
+      (canPlan() ? '<td style="text-align:right">' +
         '<button class="btn btn-sm btn-ghost" data-arch="' + esc(p.id) + '">' +
         (p.archived ? "Geri al" : "Arşivle") + '</button></td>' : '') + '</tr>';
   });
@@ -339,17 +341,17 @@ export function viewProject(S) {
   const p = byId(data.projects, S.projectId);
   if (!p) return viewProjects(S);
   const ts = projTasks(p.id), pr = progress(p.id), d = daysBetween(p.dueDate);
-  const admin = isAdmin();
+  const plan = canPlan();
 
   let h = '<div class="page-head"><div>' +
     '<button class="btn btn-sm btn-ghost" data-nav="projeler" style="margin-bottom:6px">← Projeler</button>' +
     '<h1>' + esc(p.name) + (p.archived ? ' <span class="tag tag-arch">arşiv</span>' : '') + '</h1>' +
     '<div class="sub">' + esc(p.customer || "Müşteri bilgisi girilmemiş") + '</div></div>' +
     '<div class="row-actions">' +
-    (admin ? '<button class="btn btn-sm" data-edit-proj="1">Proje bilgileri</button>' : '') +
-    (admin ? '<button class="btn btn-sm" data-add-steps="1">Adım ekle</button>' : '') +
-    (admin ? '<button class="btn btn-sm" data-arch="' + esc(p.id) + '">' + (p.archived ? "Arşivden çıkar" : "Arşivle") + '</button>' : '') +
-    (admin && p.archived ? delBtn(S, p.id, "Kalıcı sil", "delproj") : '') +
+    (plan ? '<button class="btn btn-sm" data-edit-proj="1">Proje bilgileri</button>' : '') +
+    (plan ? '<button class="btn btn-sm" data-add-steps="1">Adım ekle</button>' : '') +
+    (plan ? '<button class="btn btn-sm" data-arch="' + esc(p.id) + '">' + (p.archived ? "Arşivden çıkar" : "Arşivle") + '</button>' : '') +
+    (isAdmin() && p.archived ? delBtn(S, p.id, "Kalıcı sil", "delproj") : '') +
     '</div></div>';
 
   h += '<div class="kpis">' +
@@ -426,7 +428,7 @@ export function viewMyWork(S) {
       '<th>Termin</th><th>Durum</th><th></th></tr></thead><tbody>';
     open.forEach(function (t) {
       const pj = byId(data.projects, t.projectId), st = taskState(t), d = daysBetween(t.dueDate);
-      const need = needOf(t), made = doneOf(t), short = shortOf(t), adm = isAdmin();
+      const need = needOf(t), made = doneOf(t), short = shortOf(t), adm = canPlan();
       let cell = "";
       if (t.type === "qty" && need > 0)
         cell = '<div data-task="' + esc(t.id) + '" style="max-width:132px">' + qtyCell(t, adm, true, need, made) + '</div>';
@@ -580,6 +582,79 @@ export function viewLog(S) {
 
 /* ================= ayarlar ================= */
 
+/* ================= erişim talepleri ================= */
+
+export function viewRequests(S) {
+  const pend = pendingRequests();
+  const decided = data.requests.filter(function (r) {
+    return (r.status || "bekliyor") !== "bekliyor";
+  }).sort(function (a, b) {
+    return String(b.decidedAt || b.at || "").localeCompare(String(a.decidedAt || a.at || ""));
+  });
+
+  let h = '<div class="page-head"><div><h1>Erişim talepleri</h1>' +
+    '<div class="sub">Görevine bakıp rol verin — rol, gireceği ekranları belirler</div></div></div>';
+
+  h += '<div class="panel"><div class="panel-head"><h2>Bekleyen</h2>' +
+    '<span class="muted mono">' + pend.length + '</span></div><div class="panel-body">';
+
+  if (!pend.length) {
+    h += '<div class="empty"><h3>Bekleyen talep yok</h3>' +
+      '<p>Biri erişim istediğinde burada görünür.</p></div>';
+  }
+  pend.forEach(function (r) {
+    h += '<div class="reqline"><div class="rq-who">' +
+      '<div class="rq-name">' + esc(r.name || r.id) + '</div>' +
+      '<div class="muted" style="font-size:11.5px">' + esc(r.id) + ' · ' + esc(fmtDateTime(r.at)) + '</div>' +
+      '<div class="rq-gorev"><span class="eyebrow">Görevi</span>' + esc(r.gorev || "—") + '</div>' +
+      '</div><div class="rq-act">' +
+      '<select class="inp-sm rq-role" data-reqrole="' + esc(r.id) + '" aria-label="Verilecek rol">' +
+      ROLE_ORDER.map(function (k) {
+        return '<option value="' + esc(k) + '"' + (k === "personel" ? " selected" : "") + '>' +
+          esc(roleDef(k).label) + '</option>';
+      }).join("") + '</select>' +
+      '<button class="btn btn-sm btn-pri" data-approve="' + esc(r.id) + '">Onayla</button>' +
+      delBtn(S, r.id, "Reddet", "rejectreq") +
+      '</div></div>';
+  });
+  h += '</div></div>';
+
+  h += '<div class="panel"><div class="panel-head"><h2>Karara bağlananlar</h2>' +
+    '<span class="muted mono">' + decided.length + '</span></div><div class="panel-body">';
+  if (!decided.length) h += '<p class="muted">Henüz karara bağlanmış talep yok.</p>';
+  decided.forEach(function (r) {
+    const ok = r.status === "onaylandi";
+    h += '<div class="list-line"><div class="g">' +
+      '<div style="font-weight:600; font-size:13px">' + esc(r.name || r.id) +
+      ' <span class="tag' + (ok ? '' : ' tag-warn') + '">' +
+      (ok ? esc(roleLabel(r.role)) : "reddedildi") + '</span></div>' +
+      '<div class="muted" style="font-size:11.5px">' + esc(r.id) +
+      (r.gorev ? ' · ' + esc(r.gorev) : '') +
+      (r.decidedAt ? ' · ' + esc(fmtDateTime(r.decidedAt)) : '') + '</div></div></div>';
+  });
+  h += '</div></div>';
+
+  h += '<div class="panel"><div class="panel-head"><h2>Roller ne görür</h2></div>' +
+    '<div class="panel-body"><div class="tw"><table><thead><tr><th>Rol</th><th>Ekranlar</th>' +
+    '<th>Düzenleyebildiği iş emirleri</th></tr></thead><tbody>';
+  const SCOPE = { hepsi: "Hepsi", departman: "Kendi departmanı", kendi: "Kendine atananlar" };
+  ROLE_ORDER.forEach(function (k) {
+    const d = roleDef(k);
+    h += '<tr><td style="font-weight:600">' + esc(d.label) + '</td>' +
+      '<td class="muted">' + esc(d.views.filter(function (v) { return v !== "proje"; })
+        .map(function (v) { return VIEW_LABEL[v] || v; }).join(", ")) + '</td>' +
+      '<td class="muted">' + esc(SCOPE[d.scope] || d.scope) + '</td></tr>';
+  });
+  h += '</tbody></table></div></div></div>';
+
+  return h;
+}
+
+const VIEW_LABEL = {
+  panel: "Panel", projeler: "Projeler", isler: "İşlerim", yeni: "Yeni Proje",
+  talepler: "Talepler", kayitlar: "Kayıtlar", ayarlar: "Ayarlar"
+};
+
 export function viewSettings(S) {
   let h = '<div class="page-head"><div><h1>Ayarlar</h1>' +
     '<div class="sub">Personel, giriş yetkileri, departmanlar ve adım kataloğu</div></div></div>';
@@ -596,7 +671,7 @@ export function viewSettings(S) {
     })[0];
     h += '<div class="list-line"><div class="g">' +
       '<div style="font-weight:600; font-size:13px">' + esc(p.name) +
-        (mem ? ' <span class="tag">' + (mem.role === "yonetici" ? "yönetici" : "girebilir") + '</span>' : '') + '</div>' +
+        (mem ? ' <span class="tag">' + esc(roleLabel(mem.role)) + '</span>' : '') + '</div>' +
       '<div class="muted" style="font-size:11.5px">' + esc(deptName(p.dept)) + ' · ' + open + ' açık iş' +
         (p.email ? ' · ' + esc(p.email) : ' · e-posta yok') + '</div></div>' +
       '<button class="btn btn-sm btn-ghost" data-editperson="' + esc(p.id) + '">Düzenle</button>' +
@@ -608,12 +683,12 @@ export function viewSettings(S) {
   /* giriş yetkileri */
   h += '<div class="panel"><div class="panel-head"><h2>Giriş yetkisi</h2>' +
     '<span class="muted mono">' + data.members.length + '</span></div><div class="panel-body">' +
-    '<p class="muted" style="margin:0 0 10px; font-size:12.5px">Yalnızca bu listedeki Google hesapları uygulamaya girebilir. ' +
-    'Personel kaydına e-posta yazıp “girebilsin” işaretlediğinizde kişi buraya eklenir.</p>';
+    '<p class="muted" style="margin:0 0 10px; font-size:12.5px">Yalnızca bu listedeki hesaplar uygulamaya girebilir. ' +
+    'Rol, kişinin hangi ekranları göreceğini belirler — dağılım <strong>Talepler</strong> ekranının altında yazılı.</p>';
   data.members.forEach(function (m) {
     h += '<div class="list-line"><div class="g">' +
       '<div style="font-weight:600; font-size:13px">' + esc(m.name || m.id) +
-        (m.role === "yonetici" ? ' <span class="tag">yönetici</span>' : '') + '</div>' +
+        ' <span class="tag">' + esc(roleLabel(m.role)) + '</span></div>' +
       '<div class="muted" style="font-size:11.5px">' + esc(m.id) + '</div></div>' +
       (String(m.id).toLowerCase() === myEmail()
         ? '<span class="tag">siz</span>'

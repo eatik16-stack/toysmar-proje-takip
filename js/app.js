@@ -5,14 +5,20 @@ import {
   esc, byId, uid, lsGet, lsSet, todayISO, toast,
   numOf, needOf, doneOf, shortOf
 } from "./util.js";
-import { session, isAdmin, myEmail, myName, watchSession, signIn, signOutNow } from "./auth.js";
+import {
+  session, canSee, myEmail, myName,
+  watchSession, signIn, signInWithPassword, signOutNow, resetPassword,
+  registerAndRequest, submitRequest, resendVerification, refreshSession
+} from "./auth.js";
 import * as store from "./store.js";
 import { data } from "./store.js";
 import * as V from "./views.js";
+import { ROLE_ORDER, roleDef } from "./roles.js";
 import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS } from "./seed.js";
 
 const S = {
   view: lsGet("toysmar.view") || "panel",
+  gate: "giris",      // giriş ekranı: giris | talep
   projectId: null,
   projView: "liste",
   showArchived: false,
@@ -58,21 +64,91 @@ function renderGate() {
     return true;
   }
   if (session.state === "anon") {
-    gate('<h1>' + esc(APP.name) + '</h1>' +
-      '<p>Üretim planlama ve iş emri takibi. Devam etmek için kurum Google hesabınızla giriş yapın.</p>' +
-      '<button class="btn-google" id="btn-google">' + GOOGLE_ICON + '<span>Google ile giriş yap</span></button>' +
-      '<div class="foot">Yalnızca yetkilendirilmiş hesaplar girebilir.</div>');
+    gate(S.gate === "talep" ? requestFormHtml(true) : loginHtml());
     return true;
   }
-  if (session.state === "denied") {
-    gate('<h1>Erişim yetkiniz yok</h1>' +
-      '<p>Giriş yaptınız, ancak bu hesap uygulamaya tanımlı değil.</p>' +
-      '<div class="who">' + esc(myEmail()) + '</div>' +
-      '<p>Yöneticiden bu e-postayı <strong>Ayarlar → Giriş yetkisi</strong> listesine eklemesini isteyin.</p>' +
-      '<button class="btn" data-signout="1">Başka hesapla dene</button>');
-    return true;
-  }
+  if (session.state === "unverified") { gate(verifyHtml()); return true; }
+  if (session.state === "denied")     { gate(requestFormHtml(false)); return true; }
+  if (session.state === "pending")    { gate(pendingHtml()); return true; }
+  if (session.state === "rejected")   { gate(rejectedHtml()); return true; }
   return false;
+}
+
+function loginHtml() {
+  return '<h1>' + esc(APP.name) + '</h1>' +
+    '<p>Üretim planlama ve iş emri takibi.</p>' +
+    '<form class="gate-form" id="form-login">' +
+    '<label for="g-email">E-posta</label>' +
+    '<input id="g-email" type="email" autocomplete="username" required>' +
+    '<label for="g-pass">Şifre</label>' +
+    '<input id="g-pass" type="password" autocomplete="current-password" required>' +
+    '<button class="btn btn-pri btn-wide" type="submit">Giriş yap</button>' +
+    '</form>' +
+    '<button class="linkish" id="btn-forgot">Şifremi unuttum</button>' +
+    '<div class="gate-sep"><span>veya</span></div>' +
+    '<button class="btn-google" id="btn-google">' + GOOGLE_ICON + '<span>Google ile giriş yap</span></button>' +
+    '<div class="foot">Hesabınız yok mu? ' +
+    '<button class="linkish" data-gate="talep">Erişim izni isteyin</button></div>';
+}
+
+// needPass: hesabı olmayan kişi aynı formda şifresini de belirler.
+// Google ile girmiş kişide hesap zaten var, yalnızca görev sorulur.
+function requestFormHtml(needPass) {
+  return '<h1>Erişim izni iste</h1>' +
+    '<p>Bilgileriniz yöneticiye gider. Yönetici görevinize göre bir rol verir; ' +
+    'o rol hangi ekranları göreceğinizi belirler.</p>' +
+    (needPass ? '' : '<div class="who">' + esc(myEmail()) + '</div>') +
+    '<form class="gate-form" id="form-request">' +
+    '<label for="g-name">Ad soyad</label>' +
+    '<input id="g-name" type="text" autocomplete="name" value="' +
+      esc((session.user && session.user.name) || "") + '" required>' +
+    (needPass
+      ? '<label for="g-email">Gmail adresiniz</label>' +
+        '<input id="g-email" type="email" autocomplete="username" required>'
+      : '') +
+    '<label for="g-gorev">Göreviniz</label>' +
+    '<input id="g-gorev" type="text" placeholder="örn. kaynak ustası, üretim planlama" required>' +
+    (needPass
+      ? '<label for="g-pass">Şifre belirleyin</label>' +
+        '<input id="g-pass" type="password" autocomplete="new-password" minlength="6" required>' +
+        '<label for="g-pass2">Şifre tekrar</label>' +
+        '<input id="g-pass2" type="password" autocomplete="new-password" minlength="6" required>'
+      : '') +
+    '<button class="btn btn-pri btn-wide" type="submit">Erişim iste</button>' +
+    '</form>' +
+    (needPass
+      ? '<div class="gate-sep"><span>veya</span></div>' +
+        '<button class="btn-google" id="btn-google">' + GOOGLE_ICON + '<span>Google ile iste</span></button>' +
+        '<div class="foot"><button class="linkish" data-gate="giris">← Girişe dön</button></div>'
+      : '<div class="foot"><button class="linkish" data-signout="1">Başka hesapla dene</button></div>');
+}
+
+function verifyHtml() {
+  return '<h1>E-postanızı doğrulayın</h1>' +
+    '<div class="who">' + esc(myEmail()) + '</div>' +
+    '<p>Bu adrese bir doğrulama bağlantısı gönderdik. Bağlantıya tıkladıktan sonra ' +
+    'aşağıdaki düğmeye basın — talebiniz o an yöneticiye iletilir.</p>' +
+    '<button class="btn btn-pri btn-wide" id="btn-verified">Doğruladım, devam et</button>' +
+    '<div class="foot"><button class="linkish" id="btn-resend">E-postayı tekrar gönder</button>' +
+    ' · <button class="linkish" data-signout="1">Çık</button></div>';
+}
+
+function pendingHtml() {
+  const r = session.request || {};
+  return '<h1>Talebiniz iletildi</h1>' +
+    '<div class="who">' + esc(myEmail()) + '</div>' +
+    '<p>Yönetici görevinize göre bir rol verdiğinde uygulama açılır.' +
+    (r.gorev ? ' Bildirdiğiniz görev: <strong>' + esc(r.gorev) + '</strong>.' : '') + '</p>' +
+    '<button class="btn btn-pri btn-wide" id="btn-recheck">Durumu yenile</button>' +
+    '<div class="foot"><button class="linkish" data-signout="1">Çık</button></div>';
+}
+
+function rejectedHtml() {
+  return '<h1>Talebiniz onaylanmadı</h1>' +
+    '<div class="who">' + esc(myEmail()) + '</div>' +
+    '<p>Yönetici bu hesaba giriş yetkisi vermedi. Bunun bir yanlışlık olduğunu ' +
+    'düşünüyorsanız yöneticiyle görüşün.</p>' +
+    '<button class="btn" data-signout="1">Çık</button>';
 }
 
 function renderShell() {
@@ -90,6 +166,12 @@ function render() {
   if (renderGate()) return;
   if (!document.getElementById("main")) { renderShell(); S.booted = true; }
 
+  // Rolün göremediği bir ekranda kalınmaz — ilk açık ekrana düşülür.
+  if (!canSee(S.view)) {
+    const first = V.navItems(S)[0];
+    S.view = first ? first.id : "isler";
+  }
+
   document.getElementById("nav").innerHTML = V.navHtml(S);
   document.getElementById("rail-foot").innerHTML = V.meCardHtml();
 
@@ -103,19 +185,21 @@ function render() {
   if (!data.steps.length) { main.innerHTML = V.viewSetup(); return; }
 
   let html = "";
-  if (S.view === "panel" && isAdmin()) html = V.viewPanel(S);
+  if (S.view === "panel") html = V.viewPanel(S);
   else if (S.view === "projeler") html = V.viewProjects(S);
   else if (S.view === "proje") html = V.viewProject(S);
   else if (S.view === "isler") html = V.viewMyWork(S);
-  else if (S.view === "yeni" && isAdmin()) { if (!S.wizard) S.wizard = newWizard(); html = V.viewWizard(S); }
-  else if (S.view === "kayitlar" && isAdmin()) html = V.viewLog(S);
-  else if (S.view === "ayarlar" && isAdmin()) html = V.viewSettings(S);
-  else { S.view = "isler"; html = V.viewMyWork(S); }
+  else if (S.view === "yeni") { if (!S.wizard) S.wizard = newWizard(); html = V.viewWizard(S); }
+  else if (S.view === "talepler") html = V.viewRequests(S);
+  else if (S.view === "kayitlar") html = V.viewLog(S);
+  else if (S.view === "ayarlar") html = V.viewSettings(S);
+  else html = V.viewMyWork(S);
   main.innerHTML = html;
   renderModal();
 }
 
 function go(view) {
+  if (!canSee(view)) { toast("Bu ekran için yetkiniz yok."); return; }
   S.view = view;
   lsSet("toysmar.view", view);
   window.scrollTo(0, 0);
@@ -332,6 +416,11 @@ async function runConfirmed(key) {
     await guard(store.removeMember(id));
     toast("Giriş yetkisi kaldırıldı.");
   }
+  else if (kind === "rejectreq") {
+    const req = data.requests.filter(function (x) { return x.id === id; })[0];
+    if (req) await guard(store.rejectRequest(req));
+    toast("Talep reddedildi.");
+  }
   render();
 }
 
@@ -391,15 +480,18 @@ function renderModal() {
       data.depts.map(function (d) {
         return '<option value="' + esc(d.id) + '"' + (p && p.dept === d.id ? " selected" : "") + '>' + esc(d.name) + '</option>';
       }).join("") + '</select></div>' +
-      mf("email", "Google e-postası", p ? p.email : "", "email") +
+      mf("email", "E-posta", p ? p.email : "", "email") +
       '<div class="f"><label for="m-role">Uygulama yetkisi</label><select id="m-role" data-m="role">' +
       '<option value="">Giremez</option>' +
-      '<option value="personel"' + (mem && mem.role === "personel" ? " selected" : "") + '>Personel — kendi işlerini görür</option>' +
-      '<option value="yonetici"' + (mem && mem.role === "yonetici" ? " selected" : "") + '>Yönetici — her şeyi yönetir</option>' +
+      ROLE_ORDER.map(function (k) {
+        const rd = roleDef(k);
+        return '<option value="' + esc(k) + '"' + (mem && mem.role === k ? " selected" : "") + '>' +
+          esc(rd.label + " — " + rd.desc) + '</option>';
+      }).join("") +
       '</select></div>' +
       '<p class="muted full" style="grid-column:1/-1; margin:0; font-size:12.5px">' +
-      'E-posta yazıp yetki seçerseniz kişi Google hesabıyla girebilir. ' +
-      '“Giremez” seçilirse kayıt kalır ama giriş yapamaz.</p></div>';
+      'E-posta yazıp rol seçerseniz kişi şifresiyle ya da Google hesabıyla girebilir. ' +
+      'Rol, gireceği ekranları belirler. “Giremez” seçilirse kayıt kalır ama giriş yapamaz.</p></div>';
   }
   else if (m.kind === "dept") {
     title = "Departman ekle";
@@ -456,7 +548,7 @@ async function saveModal() {
       if (!name) { toast("Ad soyad gerekli."); return; }
       const email = val("email").trim().toLowerCase();
       const role = val("role");
-      if (role && !email) { toast("Giriş yetkisi için Google e-postası gerekli."); return; }
+      if (role && !email) { toast("Giriş yetkisi için e-posta gerekli."); return; }
 
       let people = data.people.slice();
       let pid = m.id;
@@ -474,7 +566,9 @@ async function saveModal() {
       await guard(store.saveOrg(data.depts, people, (m.id ? "personel güncellendi: " : "personel eklendi: ") + name));
 
       if (prevEmail && prevEmail !== email) await guard(store.removeMember(prevEmail));
-      if (email && role) await guard(store.saveMember(email, { name: name, role: role, personId: pid }));
+      if (email && role) await guard(store.saveMember(email, {
+        name: name, role: role, dept: val("dept"), personId: pid
+      }));
       else if (email && !role) {
         const existing = data.members.filter(function (x) { return String(x.id).toLowerCase() === email; })[0];
         if (existing) await guard(store.removeMember(email));
@@ -512,11 +606,42 @@ document.addEventListener("click", async function (e) {
 
   if (e.target.closest("#btn-google")) {
     try { await signIn(); }
-    catch (err) { gate('<h1>Giriş yapılamadı</h1><div class="err">' + esc(err.message || "") + '</div>' +
-      '<button class="btn" onclick="location.reload()">Yeniden dene</button>'); }
+    catch (err) { toast((err && err.message) || "Google ile giriş yapılamadı.", "error"); }
     return;
   }
-  if (e.target.closest("[data-signout]")) { store.stopAll(); await signOutNow(); return; }
+  if ((el = e.target.closest("[data-gate]"))) { S.gate = el.getAttribute("data-gate"); render(); return; }
+  if (e.target.closest("#btn-forgot")) {
+    const mail = document.getElementById("g-email");
+    try {
+      await resetPassword(mail ? mail.value : "");
+      toast("Şifre sıfırlama bağlantısı e-postanıza gönderildi.");
+    } catch (err) { toast((err && err.message) || "Gönderilemedi.", "error"); }
+    return;
+  }
+  if (e.target.closest("#btn-verified") || e.target.closest("#btn-recheck")) {
+    await refreshSession();
+    return;
+  }
+  if (e.target.closest("#btn-resend")) {
+    try { await resendVerification(); toast("Doğrulama e-postası tekrar gönderildi."); }
+    catch (err) { toast((err && err.message) || "Gönderilemedi.", "error"); }
+    return;
+  }
+  if (e.target.closest("[data-signout]")) {
+    store.stopAll(); S.gate = "giris"; await signOutNow(); return;
+  }
+  if ((el = e.target.closest("[data-approve]"))) {
+    const id = el.getAttribute("data-approve");
+    const req = data.requests.filter(function (x) { return x.id === id; })[0];
+    if (!req) return;
+    const sel = document.querySelector('[data-reqrole="' + id + '"]');
+    const role = (sel && sel.value) || "personel";
+    el.disabled = true;
+    await guard(store.approveRequest(req, role));
+    toast((req.name || id) + " · " + roleDef(role).label + " olarak eklendi.");
+    render();
+    return;
+  }
   if (e.target.closest("[data-doseed]")) { await doSeed(); return; }
   if (e.target.closest("[data-reloadlog]")) { S.log = null; render(); loadLogNow(); return; }
 
@@ -630,6 +755,35 @@ document.addEventListener("change", async function (e) {
       data.steps.map(function (s) { return s.id === sid ? Object.assign({}, s, { dept: v }) : s; }),
       "adım departmanı değişti"));
     return;
+  }
+});
+
+document.addEventListener("submit", async function (e) {
+  const form = e.target;
+  if (form.id !== "form-login" && form.id !== "form-request") return;
+  e.preventDefault();
+
+  const val = function (id) { const x = document.getElementById(id); return x ? x.value : ""; };
+  const btn = form.querySelector('button[type="submit"]');
+  if (btn) btn.disabled = true;
+
+  try {
+    if (form.id === "form-login") {
+      await signInWithPassword(val("g-email"), val("g-pass"));
+      return;
+    }
+    // Şifre alanı yalnızca hesabı olmayan kişiye çıkar.
+    if (document.getElementById("g-pass")) {
+      if (val("g-pass") !== val("g-pass2")) throw new Error("Şifreler aynı değil.");
+      await registerAndRequest(val("g-name"), val("g-email"), val("g-pass"), val("g-gorev"));
+      toast("Doğrulama e-postası gönderildi.");
+    } else {
+      await submitRequest(val("g-name"), val("g-gorev"));
+      toast("Talebiniz yöneticiye iletildi.");
+    }
+  } catch (err) {
+    toast((err && err.message) || "İşlem tamamlanamadı.", "error");
+    if (btn) btn.disabled = false;
   }
 });
 

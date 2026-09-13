@@ -1,19 +1,44 @@
-// Google ile giriş ve yetki kapısı.
+// Giriş ve yetki kapısı.
 //
-// Giriş yapmak yetmez: kişinin e-postası Firestore'daki "allowed"
-// koleksiyonunda kayıtlı olmalı. Kayıtlı değilse uygulama açılmaz.
+// İki yoldan girilir: e-posta + şifre ya da Google. Hangisi olursa olsun
+// girmek yetmez — kişinin e-postası Firestore'daki "allowed" koleksiyonunda
+// kayıtlı olmalı. Kayıtlı değilse kişi bir kereliğine erişim talebi bırakır,
+// yöneticinin verdiği rol de hangi ekranları göreceğini belirler.
 
 import { fb } from "./fb.js";
+import { lsGet, lsSet } from "./util.js";
+import { DEFAULT_ROLE, PLANNER_ROLES, roleSees } from "./roles.js";
+
+// Doğrulanmamış hesap Firestore'a yazamaz (kurallar email_verified istiyor),
+// bu yüzden talep bilgisi doğrulama tamamlanana kadar tarayıcıda bekler.
+const DRAFT_KEY = "toysmar.talep";
 
 export const session = {
-  state: "loading",   // loading | anon | denied | ready | error
-  user: null,         // { email, name, photo }
-  member: null,       // allowed/<email> belgesi: { name, role, dept }
+  // loading | anon | unverified | denied | pending | rejected | ready | error
+  state: "loading",
+  user: null,         // { email, name, photo, verified }
+  member: null,       // allowed/<e-posta>: { name, role, dept, personId }
+  request: null,      // requests/<e-posta>: { name, gorev, status, ... }
   error: ""
 };
 
+/* ---------------- rol ---------------- */
+
+export function myRole() {
+  return (session.member && session.member.role) || DEFAULT_ROLE;
+}
+
 export function isAdmin() {
-  return !!(session.member && session.member.role === "yonetici");
+  return !!session.member && myRole() === "yonetici";
+}
+
+// Proje açan, termin ve atama değiştiren roller.
+export function canPlan() {
+  return !!session.member && PLANNER_ROLES.indexOf(myRole()) !== -1;
+}
+
+export function canSee(view) {
+  return !!session.member && roleSees(myRole(), view);
 }
 
 export function myEmail() {
@@ -26,7 +51,82 @@ export function myName() {
   return myEmail();
 }
 
+/* ---------------- oturum ---------------- */
+
+function readDraft() {
+  try { return JSON.parse(lsGet(DRAFT_KEY) || "null"); } catch (e) { return null; }
+}
+function writeDraft(v) { lsSet(DRAFT_KEY, v ? JSON.stringify(v) : ""); }
+
+let notify = function () {};
+
+// Oturumdaki kişinin hangi durumda olduğunu belirler: yetkisi var mı,
+// talebi var mı, e-postası doğrulanmış mı.
+async function evaluate(user) {
+  if (!user) {
+    session.state = "anon"; session.user = null;
+    session.member = null; session.request = null;
+    return;
+  }
+
+  session.user = {
+    email: String(user.email || "").toLowerCase(),
+    name: user.displayName || "",
+    photo: user.photoURL || "",
+    verified: user.emailVerified !== false
+  };
+
+  if (!session.user.verified) {
+    session.state = "unverified";
+    session.member = null; session.request = null;
+    return;
+  }
+
+  const f = await fb();
+
+  try {
+    const snap = await f.getDoc(f.doc(f.db, "allowed", session.user.email));
+    if (snap.exists()) {
+      session.member = Object.assign({ role: DEFAULT_ROLE }, snap.data());
+      session.request = null;
+      session.state = "ready";
+      return;
+    }
+  } catch (e) {
+    // Kurallar okumayı engellediğinde de sonuç aynı: yetki yok.
+    session.error = (e && e.message) || "";
+  }
+
+  session.member = null;
+
+  // Doğrulama beklerken bırakılmış talep varsa şimdi yazılır.
+  const draft = readDraft();
+  if (draft && draft.email === session.user.email) {
+    try {
+      await writeRequest(draft.name, draft.gorev);
+      writeDraft(null);
+    } catch (e) {
+      session.error = (e && e.message) || "";
+    }
+  }
+
+  try {
+    const rs = await f.getDoc(f.doc(f.db, "requests", session.user.email));
+    if (rs.exists()) {
+      session.request = Object.assign({}, rs.data());
+      session.state = session.request.status === "reddedildi" ? "rejected" : "pending";
+      return;
+    }
+  } catch (e) {
+    session.error = (e && e.message) || "";
+  }
+
+  session.request = null;
+  session.state = "denied";
+}
+
 export async function watchSession(onChange) {
+  notify = onChange;
   let f;
   try {
     f = await fb();
@@ -38,33 +138,39 @@ export async function watchSession(onChange) {
   }
 
   f.onAuthStateChanged(f.auth, async function (user) {
-    if (!user) {
-      session.state = "anon"; session.user = null; session.member = null;
-      onChange(session);
-      return;
-    }
-    session.user = {
-      email: String(user.email || "").toLowerCase(),
-      name: user.displayName || "",
-      photo: user.photoURL || ""
-    };
-    try {
-      const snap = await f.getDoc(f.doc(f.db, "allowed", session.user.email));
-      if (snap.exists()) {
-        session.member = Object.assign({ role: "personel" }, snap.data());
-        session.state = "ready";
-      } else {
-        session.member = null;
-        session.state = "denied";
-      }
-    } catch (e) {
-      // Kurallar erişimi engellediğinde de buraya düşer — sonuç aynı: yetki yok.
-      session.member = null;
-      session.state = "denied";
-      session.error = (e && e.message) || "";
-    }
+    await evaluate(user);
     onChange(session);
   });
+}
+
+// Kullanıcı e-postasını doğrulayıp geri döndüğünde çağrılır: Firebase
+// kaydını tazeleyip durumu yeniden hesaplar.
+export async function refreshSession() {
+  const f = await fb();
+  const u = f.auth.currentUser;
+  if (u && f.reload) { try { await f.reload(u); } catch (e) {} }
+  await evaluate(f.auth.currentUser);
+  notify(session);
+}
+
+/* ---------------- giriş ---------------- */
+
+function authError(e, fallback) {
+  const code = (e && e.code) || "";
+  const map = {
+    "auth/invalid-email": "E-posta adresi geçersiz.",
+    "auth/user-disabled": "Bu hesap devre dışı bırakılmış.",
+    "auth/user-not-found": "Bu e-postayla kayıtlı hesap yok.",
+    "auth/wrong-password": "Şifre hatalı.",
+    "auth/invalid-credential": "E-posta veya şifre hatalı.",
+    "auth/too-many-requests": "Çok fazla deneme yapıldı. Bir süre sonra tekrar deneyin.",
+    "auth/email-already-in-use": "Bu e-postayla zaten bir hesap var. Şifrenizle giriş yapın.",
+    "auth/weak-password": "Şifre en az 6 karakter olmalı.",
+    "auth/network-request-failed": "İnternet bağlantısı kurulamadı.",
+    "auth/unauthorized-domain": "Bu adres Firebase'de yetkili değil. Authentication → Settings → Authorized domains listesine eklenmeli.",
+    "auth/operation-not-allowed": "Bu giriş yöntemi Firebase'de açık değil. Authentication → Sign-in method bölümünden açılmalı."
+  };
+  return new Error(map[code] || (e && e.message) || fallback || "İşlem tamamlanamadı.");
 }
 
 export async function signIn() {
@@ -76,17 +182,97 @@ export async function signIn() {
   } catch (e) {
     const code = (e && e.code) || "";
     if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") return;
-    if (code === "auth/unauthorized-domain") {
-      throw new Error("Bu adres Firebase'de yetkili değil. Authentication → Settings → Authorized domains listesine eklenmeli.");
-    }
-    if (code === "auth/operation-not-allowed") {
-      throw new Error("Google ile giriş Firebase'de açık değil. Authentication → Sign-in method → Google açılmalı.");
-    }
-    throw e;
+    throw authError(e, "Google ile giriş yapılamadı.");
+  }
+}
+
+export async function signInWithPassword(email, password) {
+  const f = await fb();
+  const mail = String(email || "").trim().toLowerCase();
+  if (!mail || !password) throw new Error("E-posta ve şifre gerekli.");
+  try {
+    await f.signInWithEmailAndPassword(f.auth, mail, password);
+  } catch (e) {
+    throw authError(e, "Giriş yapılamadı.");
   }
 }
 
 export async function signOutNow() {
   const f = await fb();
   await f.signOut(f.auth);
+}
+
+export async function resetPassword(email) {
+  const f = await fb();
+  const mail = String(email || "").trim().toLowerCase();
+  if (!mail) throw new Error("Önce e-posta adresinizi yazın.");
+  try {
+    await f.sendPasswordResetEmail(f.auth, mail);
+  } catch (e) {
+    throw authError(e, "Şifre sıfırlama e-postası gönderilemedi.");
+  }
+}
+
+/* ---------------- erişim talebi ---------------- */
+
+async function writeRequest(name, gorev) {
+  const f = await fb();
+  await f.setDoc(f.doc(f.db, "requests", myEmail()), {
+    email: myEmail(),
+    name: String(name || "").trim(),
+    gorev: String(gorev || "").trim(),
+    status: "bekliyor",
+    at: new Date().toISOString()
+  });
+}
+
+// Hesabı olmayan kişi: şifresini belirler, doğrulama e-postası gider,
+// talep doğrulama tamamlanınca yazılır.
+export async function registerAndRequest(name, email, password, gorev) {
+  const f = await fb();
+  const mail = String(email || "").trim().toLowerCase();
+  if (!String(name || "").trim()) throw new Error("Ad soyad gerekli.");
+  if (!mail) throw new Error("E-posta gerekli.");
+  if (!gorev || !String(gorev).trim()) throw new Error("Görevinizi yazın.");
+  if (!password || password.length < 6) throw new Error("Şifre en az 6 karakter olmalı.");
+
+  writeDraft({ email: mail, name: String(name).trim(), gorev: String(gorev).trim() });
+
+  try {
+    const cred = await f.createUserWithEmailAndPassword(f.auth, mail, password);
+    if (f.updateProfile && cred && cred.user) {
+      try { await f.updateProfile(cred.user, { displayName: String(name).trim() }); } catch (e) {}
+    }
+    if (f.sendEmailVerification && cred && cred.user) await f.sendEmailVerification(cred.user);
+  } catch (e) {
+    writeDraft(null);
+    throw authError(e, "Hesap oluşturulamadı.");
+  }
+}
+
+// Zaten giriş yapmış (çoğunlukla Google ile gelmiş) kişinin talebi.
+export async function submitRequest(name, gorev) {
+  if (!String(name || "").trim()) throw new Error("Ad soyad gerekli.");
+  if (!String(gorev || "").trim()) throw new Error("Görevinizi yazın.");
+  try {
+    await writeRequest(name, gorev);
+  } catch (e) {
+    const msg = (e && e.message) || "";
+    if (/permission|insufficient/i.test(msg)) {
+      throw new Error("Talep gönderilemedi. Bu e-postayla daha önce talep bırakılmış olabilir.");
+    }
+    throw e;
+  }
+  await refreshSession();
+}
+
+export async function resendVerification() {
+  const f = await fb();
+  const u = f.auth.currentUser;
+  if (!u) throw new Error("Önce giriş yapın.");
+  try {
+    await f.sendEmailVerification(u);
+  } catch (e) {
+    throw authError(e, "Doğrulama e-postası gönderilemedi.");
+  }
 }
