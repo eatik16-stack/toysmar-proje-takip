@@ -1,10 +1,10 @@
 rules_version = '2';
 
-// Toysmar Proje Takip — kalıcı yetki kuralları.
-// Bu dosya bir kez yayınlanır ve bir daha değiştirilmesi gerekmez:
-// kimin gireceği kurallarda değil, "allowed" koleksiyonunda tutulur.
+// Toysmar Proje Takip — yetki kuralları.
+// Kimin gireceği kurallarda değil, "allowed" koleksiyonunda tutulur.
+// Kurallar yalnızca yeni bir modül ya da rol eklendiğinde yeniden yayınlanır.
 // Roller js/roles.js dosyasındakilerle birebir aynı olmalı:
-// yonetici, planlamaci, sef, personel.
+// yonetici, planlamaci, satis, sef, personel.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -33,6 +33,8 @@ service cloud.firestore {
     function isAdmin()  { return hasRole(['yonetici']); }
     // Proje açan, atama ve termin değiştiren roller.
     function canPlan()  { return hasRole(['yonetici', 'planlamaci']); }
+    // Teklif hazırlayan ve fiyat gören roller.
+    function canSell()  { return hasRole(['yonetici', 'satis']); }
 
     // --- kimler girebilir --------------------------------------------
     // Herkes listeyi okuyabilir (ekranlarda isim göstermek için),
@@ -46,8 +48,11 @@ service cloud.firestore {
     // Kişi kendi talebini yalnızca bir kez bırakır: create sadece belge
     // yokken çalışır, update yalnızca yöneticide. Reddedilen bir talep
     // bu yüzden kendiliğinden tekrar açılamaz.
+    // Tek belge okuma (get) ile koleksiyonu listeleme (list) ayrı tutulur:
+    // listeleme yalnızca yöneticide.
     match /requests/{userEmail} {
-      allow read:   if isAdmin() || (signedIn() && email() == userEmail);
+      allow get:    if isAdmin() || (signedIn() && email() == userEmail);
+      allow list:   if isAdmin();
       allow create: if signedIn()
                     && email() == userEmail
                     && !exists(userRef())
@@ -82,6 +87,23 @@ service cloud.firestore {
                     || (hasRole(['sef']) && myDept() != ''
                         && resource.data.get('dept', '') == myDept());
       allow delete: if isAdmin();
+    }
+
+    // --- teklifler ------------------------------------------------------
+    // Fiyatlar yalnızca satış rollerine açık. Gönderilmiş teklif silinmez,
+    // iptal edilir; silme yalnızca hiç gönderilmemiş taslakta (yönetici hepsinde).
+    match /quotes/{doc} {
+      allow read, create, update: if canSell();
+      allow delete: if isAdmin()
+                    || (canSell() && resource.data.get('status', '') == 'taslak');
+    }
+    // Teklife eklenen yerleşim görseli (belge başına bir görsel).
+    match /quoteFiles/{doc} {
+      allow read, write: if canSell();
+    }
+    // Teklif ayarları, ürün kataloğu ve teklif numarası sayacı.
+    match /sales/{doc} {
+      allow read, write: if canSell();
     }
 
     // --- değişiklik günlüğü ---------------------------------------------

@@ -119,11 +119,15 @@ export function navItems(S) {
   let mineOpen = 0;
   const p = mePerson();
   if (p) mineOpen = data.tasks.filter(function (t) { return t.assignee === p.id && t.status !== "tamam"; }).length;
+  const openQuotes = data.quotes.filter(function (q) {
+    return !q.supersededBy && (q.status === "taslak" || q.status === "gonderildi");
+  }).length;
   const items = [
     { id: "panel", ico: "◧", label: "Panel" },
     { id: "projeler", ico: "▦", label: "Projeler", count: activeProjects().length },
     { id: "isler", ico: "✓", label: "İşlerim", count: mineOpen || null },
     { id: "yeni", ico: "＋", label: "Yeni Proje" },
+    { id: "teklifler", ico: "₺", label: "Teklifler", count: openQuotes || null },
     { id: "talepler", ico: "◎", label: "Talepler", count: pendingRequests().length || null },
     { id: "kayitlar", ico: "≡", label: "Kayıtlar" },
     { id: "ayarlar", ico: "⚙", label: "Ayarlar" }
@@ -131,9 +135,13 @@ export function navItems(S) {
   return items.filter(function (i) { return canSee(i.id); });
 }
 
+// Menüde görünmeyen alt ekranlar, bağlı oldukları menü öğesini işaretler.
+const NAV_PARENT = { proje: "projeler", teklif: "teklifler", "teklif-ayar": "teklifler" };
+
 export function navHtml(S) {
+  const active = NAV_PARENT[S.view] || S.view;
   return navItems(S).map(function (i) {
-    return '<button data-nav="' + i.id + '" aria-current="' + (S.view === i.id) + '">' +
+    return '<button data-nav="' + i.id + '" aria-current="' + (active === i.id) + '">' +
       '<span class="ico" aria-hidden="true">' + i.ico + '</span><span>' + esc(i.label) + '</span>' +
       (i.count ? '<span class="count">' + i.count + '</span>' : '') + '</button>';
   }).join("");
@@ -367,7 +375,12 @@ export function viewProject(S) {
   h += '<div class="panel"><div class="panel-body" style="display:flex; gap:22px; flex-wrap:wrap">' +
     meta("Tema", p.theme) + meta("Panel sayısı", p.panelCount) + meta("Telefon", p.phone) +
     meta("Başlangıç", fmtDate(p.startDate)) + meta("Teslim", fmtDate(p.dueDate)) +
-    meta("Adres", p.address) + '</div></div>';
+    meta("Adres", p.address) +
+    (p.quoteNo ? '<div style="min-width:110px"><div class="eyebrow">Teklif</div><div style="font-size:13.5px; margin-top:2px">' +
+      (canSee("teklifler") && p.quoteId
+        ? '<button class="linkish mono" style="font-size:13.5px" data-qopen="' + esc(p.quoteId) + '">' + esc(p.quoteNo) + '</button>'
+        : '<span class="mono">' + esc(p.quoteNo) + '</span>') + '</div></div>' : '') +
+    '</div></div>';
 
   h += '<div class="panel"><div class="panel-head"><h2>İş emirleri</h2>' +
     '<span class="muted"><span class="mono">' + ts.length + '</span> adım</span></div>';
@@ -476,6 +489,11 @@ export function viewWizard(S) {
     ["Bilgiler", "İçerik", "Atama"].map(function (l, i) {
       return '<span class="s' + (w.step === i + 1 ? " on" : "") + '"><span class="n">' + (i + 1) + '</span>' + l + '</span>';
     }).join('<span aria-hidden="true">→</span>') + '</div></div>';
+
+  if (w.quoteNo) {
+    h += '<div class="banner banner-info"><span aria-hidden="true">i</span><div><strong>' + esc(w.quoteNo) +
+      ' teklifinden oluşturuluyor.</strong>Müşteri bilgileri tekliften geldi; proje açılınca teklife bağlanır.</div></div>';
+  }
 
   if (w.step === 1) {
     return h + '<div class="panel"><div class="panel-head"><h2>1 · Proje bilgileri</h2></div><div class="panel-body">' +
@@ -645,8 +663,8 @@ export function viewRequests(S) {
   ROLE_ORDER.forEach(function (k) {
     const d = roleDef(k);
     h += '<tr><td style="font-weight:600">' + esc(d.label) + '</td>' +
-      '<td class="muted">' + esc(d.views.filter(function (v) { return v !== "proje"; })
-        .map(function (v) { return VIEW_LABEL[v] || v; }).join(", ")) + '</td>' +
+      '<td class="muted">' + esc(d.views.filter(function (v) { return VIEW_LABEL[v]; })
+        .map(function (v) { return VIEW_LABEL[v]; }).join(", ")) + '</td>' +
       '<td class="muted">' + esc(SCOPE[d.scope] || d.scope) + '</td></tr>';
   });
   h += '</tbody></table></div></div></div>';
@@ -656,7 +674,7 @@ export function viewRequests(S) {
 
 const VIEW_LABEL = {
   panel: "Panel", projeler: "Projeler", isler: "İşlerim", yeni: "Yeni Proje",
-  talepler: "Talepler", kayitlar: "Kayıtlar", ayarlar: "Ayarlar"
+  teklifler: "Teklifler", talepler: "Talepler", kayitlar: "Kayıtlar", ayarlar: "Ayarlar"
 };
 
 export function viewSettings(S) {

@@ -6,13 +6,16 @@ import {
   numOf, needOf, doneOf, shortOf
 } from "./util.js";
 import {
-  session, canSee, myEmail, myName,
+  session, canSee, canSell, myEmail, myName,
   watchSession, signIn, signInWithPassword, signOutNow, resetPassword,
   registerAndRequest, submitRequest, resendVerification, refreshSession
 } from "./auth.js";
 import * as store from "./store.js";
 import { data } from "./store.js";
 import * as V from "./views.js";
+import * as QV from "./quote-views.js";
+import * as QA from "./quote-app.js";
+import { linkProject, quoteLabel } from "./quotes.js";
 import { ROLE_ORDER, roleDef } from "./roles.js";
 import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS } from "./seed.js";
 
@@ -27,10 +30,15 @@ const S = {
   confirm: null,
   confirmTimer: null,
   log: null,
+  focusNext: null,
   booted: false
 };
 
 const root = () => document.getElementById("root");
+
+QA.init({ S: S, render: render, guard: guard, startProjectFromQuote: startProjectFromQuote });
+
+const QUOTE_VIEWS = ["teklifler", "teklif", "teklif-ayar"];
 
 /* ==================== açılış ==================== */
 
@@ -177,12 +185,20 @@ function render() {
 
   const main = document.getElementById("main");
   const ready = data.loaded.catalog && data.loaded.org;
+  const quoteView = QUOTE_VIEWS.indexOf(S.view) !== -1;
 
   if (!ready) {
     main.innerHTML = '<div class="panel"><div class="empty"><h3>Veriler yükleniyor…</h3></div></div>';
     return;
   }
-  if (!data.steps.length) { main.innerHTML = V.viewSetup(); return; }
+  // Teklif modülü üretim kataloğundan bağımsız çalışır.
+  if (!data.steps.length && !quoteView) { main.innerHTML = V.viewSetup(); return; }
+
+  if (quoteView) {
+    QA.ensureDraft();
+    // Teklif yazılırken gelen veri güncellemeleri düzenleyiciyi yeniden çizmez.
+    if (QA.tryPatch()) { renderModal(); return; }
+  }
 
   let html = "";
   if (S.view === "panel") html = V.viewPanel(S);
@@ -190,16 +206,51 @@ function render() {
   else if (S.view === "proje") html = V.viewProject(S);
   else if (S.view === "isler") html = V.viewMyWork(S);
   else if (S.view === "yeni") { if (!S.wizard) S.wizard = newWizard(); html = V.viewWizard(S); }
+  else if (S.view === "teklifler") html = QV.viewQuotes(S);
+  else if (S.view === "teklif") html = S.q ? QV.viewQuote(S) : QV.viewQuotes(S);
+  else if (S.view === "teklif-ayar") { QA.ensureSalesDraft(); html = QV.viewSalesSettings(S); }
   else if (S.view === "talepler") html = V.viewRequests(S);
   else if (S.view === "kayitlar") html = V.viewLog(S);
   else if (S.view === "ayarlar") html = V.viewSettings(S);
   else html = V.viewMyWork(S);
-  main.innerHTML = html;
+  paint(main, html);
   renderModal();
+}
+
+// İçeriği değiştirirken odaktaki alanı ve imleç yerini korur; yazarken gelen
+// bir güncelleme kullanıcının yazdığı kutudan atmasın.
+function paint(main, html) {
+  const ae = document.activeElement;
+  let keep = null;
+  if (ae && ae.id && main.contains(ae)) {
+    keep = { id: ae.id, s: null, e: null };
+    try { keep.s = ae.selectionStart; keep.e = ae.selectionEnd; } catch (err) {}
+  }
+  main.innerHTML = html;
+  const explicit = S.focusNext;
+  const want = explicit || (keep && keep.id);
+  S.focusNext = null;
+  if (!want) return;
+  const el = document.getElementById(want);
+  if (!el || el.disabled) return;
+  // Açıkça istenen alana kaydırılır; yalnızca geri verilen odakta sayfa oynamaz.
+  try { el.focus({ preventScroll: !explicit }); } catch (err) { el.focus(); }
+  if (explicit) {
+    // Yeni eklenen kalemin miktar kutusu gibi dolu gelen alanda yazılan, içeriğin yerine geçsin.
+    if (el.tagName === "INPUT" && el.value) { try { el.select(); } catch (err) {} }
+  } else if (keep && keep.id === want && typeof keep.s === "number") {
+    try { el.setSelectionRange(keep.s, keep.e); } catch (err) {}
+  }
 }
 
 function go(view) {
   if (!canSee(view)) { toast("Bu ekran için yetkiniz yok."); return; }
+  if (S.view === "teklif" && view !== "teklif") QA.flush();
+  if (S.view === "teklif-ayar" && view !== "teklif-ayar" && S.salesDirty) {
+    toast("Kaydedilmemiş teklif ayarları bırakıldı.");
+    S.salesDraft = null; S.salesDirty = false;
+  }
+  if (view === "teklifler" || view === "teklif-ayar") { S.q = null; S.qPreview = false; }
   S.view = view;
   lsSet("toysmar.view", view);
   window.scrollTo(0, 0);
@@ -241,8 +292,22 @@ function newWizard() {
       name: "", customer: "", address: "", phone: "", theme: "", panelCount: "",
       startDate: todayISO(), dueDate: ""
     },
-    sel: {}
+    sel: {},
+    quoteId: "", quoteNo: ""
   };
+}
+
+// Kabul edilen tekliften üretim projesi: sihirbaz müşteri bilgileriyle dolu açılır.
+function startProjectFromQuote(q) {
+  const c = q.customer || {};
+  S.wizard = newWizard();
+  S.wizard.p.name = q.title || c.company || quoteLabel(q);
+  S.wizard.p.customer = [c.company, c.contact].filter(Boolean).join(" — ");
+  S.wizard.p.phone = c.phone || "";
+  S.wizard.p.address = [c.address, c.city].filter(Boolean).join(", ");
+  S.wizard.quoteId = q.id;
+  S.wizard.quoteNo = quoteLabel(q);
+  go("yeni");
 }
 
 async function toggleTask(id, force) {
@@ -318,7 +383,8 @@ async function createProjectNow() {
     name: w.p.name.trim(), customer: w.p.customer, address: w.p.address, phone: w.p.phone,
     theme: w.p.theme, panelCount: w.p.panelCount ? Number(w.p.panelCount) : null,
     startDate: w.p.startDate || "", dueDate: w.p.dueDate || "",
-    status: "aktif", archived: false, createdAt: now, createdBy: myEmail()
+    status: "aktif", archived: false, createdAt: now, createdBy: myEmail(),
+    quoteId: w.quoteId || "", quoteNo: w.quoteNo || ""
   };
   const tasks = picked.map(function (s, i) {
     const v = w.sel[s.id];
@@ -335,6 +401,7 @@ async function createProjectNow() {
   });
   try {
     await store.createProject(pid, project, tasks);
+    if (project.quoteId && canSell()) await guard(linkProject(project.quoteId, pid, project.name));
     S.wizard = null;
     toast(tasks.length + " iş emri oluşturuldu.");
     openProject(pid);
@@ -375,9 +442,11 @@ async function loadLogNow() {
 function arm(key) {
   clearTimeout(S.confirmTimer);
   S.confirm = key;
+  // Teklif düzenleyicisi normalde yeniden çizilmez; onay düğmesinin değişmesi için zorlanır.
+  S.qRebuild = true;
   render();
   toast("Onaylamak için tekrar tıklayın.");
-  S.confirmTimer = setTimeout(function () { S.confirm = null; render(); }, 5000);
+  S.confirmTimer = setTimeout(function () { S.confirm = null; S.qRebuild = true; render(); }, 5000);
 }
 
 async function runConfirmed(key) {
@@ -385,6 +454,8 @@ async function runConfirmed(key) {
   S.confirm = null;
   const i = key.indexOf(":");
   const kind = key.slice(0, i), id = key.slice(i + 1);
+
+  if (kind.charAt(0) === "q" && await QA.confirmed(kind, id)) { S.qRebuild = true; render(); return; }
 
   if (kind === "delproj") {
     const p = byId(data.projects, id);
@@ -647,6 +718,8 @@ document.addEventListener("click", async function (e) {
   if (e.target.closest("[data-doseed]")) { await doSeed(); return; }
   if (e.target.closest("[data-reloadlog]")) { S.log = null; render(); loadLogNow(); return; }
 
+  if (!e.target.closest("[data-confirm]") && await QA.onClick(e)) return;
+
   if ((el = e.target.closest("[data-nav]"))) { go(el.getAttribute("data-nav")); return; }
   if ((el = e.target.closest("[data-projview]"))) { S.projView = el.getAttribute("data-projview"); render(); return; }
   if (e.target.closest("[data-togglearch]")) { S.showArchived = !S.showArchived; render(); return; }
@@ -727,8 +800,12 @@ document.addEventListener("click", async function (e) {
   if (e.target.closest("[data-msave]")) { await saveModal(); return; }
 });
 
+document.addEventListener("input", function (e) { QA.onInput(e); });
+
 document.addEventListener("change", async function (e) {
   const t = e.target;
+
+  if (await QA.onChange(e)) return;
 
   if (t.hasAttribute && t.hasAttribute("data-w")) { S.wizard.p[t.getAttribute("data-w")] = t.value; return; }
 
@@ -790,5 +867,6 @@ document.addEventListener("submit", async function (e) {
 });
 
 document.addEventListener("keydown", function (e) {
-  if (e.key === "Escape" && S.modal) { S.modal = null; renderModal(); }
+  if (e.key === "Escape" && S.modal) { S.modal = null; renderModal(); return; }
+  QA.onKeydown(e);
 });

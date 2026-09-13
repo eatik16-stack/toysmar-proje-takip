@@ -58,6 +58,7 @@ export async function fb() {
     orderBy: fsMod.orderBy,
     limit: fsMod.limit,
     writeBatch: fsMod.writeBatch,
+    runTransaction: fsMod.runTransaction,
     serverTimestamp: fsMod.serverTimestamp
   };
   return bundle;

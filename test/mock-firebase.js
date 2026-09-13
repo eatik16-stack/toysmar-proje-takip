@@ -209,14 +209,37 @@
     orderBy: function (field, dir) { return { __order: { field: field, dir: dir || "asc" } }; },
     limit: function (n) { return { __limit: n }; },
 
+    // İşlem: okumalar anında, yazmalar sonunda topluca uygulanır.
+    runTransaction: function (db, fn) {
+      const ops = [];
+      const tx = {
+        get: function (r) { return Promise.resolve(docSnap(r.__path)); },
+        set: function (r, b) { ops.push(["set", r.__path, b]); return tx; },
+        update: function (r, b) { ops.push(["update", r.__path, b]); return tx; }
+      };
+      return Promise.resolve(fn(tx)).then(function (res) {
+        ops.forEach(function (o) {
+          if (o[0] === "set") DB[o[1]] = clone(o[2]);
+          else DB[o[1]] = Object.assign({}, DB[o[1]], clone(o[2]));
+          window.__MOCK_WRITES__.push(["tx-" + o[0], o[1]]);
+        });
+        persist();
+        ops.forEach(function (o) { fire(o[1]); });
+        return res;
+      });
+    },
+
     writeBatch: function () {
       const ops = [];
       return {
         set: function (r, b) { ops.push(["set", r.__path, b]); },
+        update: function (r, b) { ops.push(["update", r.__path, b]); },
         delete: function (r) { ops.push(["delete", r.__path]); },
         commit: function () {
           ops.forEach(function (o) {
-            if (o[0] === "set") DB[o[1]] = clone(o[2]); else delete DB[o[1]];
+            if (o[0] === "set") DB[o[1]] = clone(o[2]);
+            else if (o[0] === "update") DB[o[1]] = Object.assign({}, DB[o[1]], clone(o[2]));
+            else delete DB[o[1]];
             window.__MOCK_WRITES__.push([o[0], o[1]]);
           });
           persist();

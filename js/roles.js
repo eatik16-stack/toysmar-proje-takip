@@ -7,8 +7,15 @@ export const ROLES = {
   yonetici: {
     label: "Yönetici",
     desc: "Her şeyi yönetir, giriş yetkisi verir",
-    views: ["panel", "projeler", "proje", "isler", "yeni", "talepler", "kayitlar", "ayarlar"],
+    views: ["panel", "projeler", "proje", "isler", "yeni", "teklifler", "teklif", "teklif-ayar",
+      "talepler", "kayitlar", "ayarlar"],
     scope: "hepsi"
+  },
+  satis: {
+    label: "Satış",
+    desc: "Teklif hazırlar, üretimdeki projeleri izler",
+    views: ["teklifler", "teklif", "teklif-ayar", "projeler", "proje"],
+    scope: "kendi"
   },
   planlamaci: {
     label: "Planlamacı",
@@ -31,12 +38,15 @@ export const ROLES = {
 };
 
 // Yetkiden yetkisize doğru — yönetici ekranındaki sıralama budur.
-export const ROLE_ORDER = ["yonetici", "planlamaci", "sef", "personel"];
+export const ROLE_ORDER = ["yonetici", "planlamaci", "satis", "sef", "personel"];
 
 export const DEFAULT_ROLE = "personel";
 
 // Proje açma, termin ve atama değiştirme yetkisi olan roller.
 export const PLANNER_ROLES = ["yonetici", "planlamaci"];
+
+// Teklif hazırlayan ve fiyatları görebilen roller.
+export const SALES_ROLES = ["yonetici", "satis"];
 
 export function roleDef(role) {
   return ROLES[role] || ROLES[DEFAULT_ROLE];

@@ -3,7 +3,7 @@
 // salt eklemedir (kurallarda update/delete kapalı), yani geçmiş kaybolmaz.
 
 import { fb } from "./fb.js";
-import { myEmail, myName, myRole, isAdmin, canPlan } from "./auth.js";
+import { myEmail, myName, myRole, isAdmin, canPlan, canSell } from "./auth.js";
 import { uid } from "./util.js";
 
 export const data = {
@@ -12,7 +12,11 @@ export const data = {
   members: [],                    // allowed/*  (giriş yetkisi olanlar)
   requests: [],                   // requests/* (bekleyen erişim talepleri)
   projects: [], tasks: [],
-  loaded: { catalog: false, org: false, members: false, projects: false, tasks: false }
+  quotes: [],                     // quotes/*   (yalnızca satış rollerinde)
+  sales: null,                    // sales/settings
+  products: [],                   // sales/catalog
+  loaded: { catalog: false, org: false, members: false, projects: false, tasks: false,
+            quotes: false, sales: false, products: false }
 };
 
 let unsubs = [];
@@ -75,6 +79,25 @@ export async function subscribeAll(onChange, onError) {
     data.tasks = rowsOf(s);
     data.loaded.tasks = true; onChange();
   }, fail("iş emirleri")));
+
+  // Fiyatlar yalnızca satış rollerine açık; diğer rollerde kurallar reddeder.
+  if (canSell()) {
+    unsubs.push(f.onSnapshot(f.collection(f.db, "quotes"), function (s) {
+      data.quotes = rowsOf(s);
+      data.loaded.quotes = true; onChange();
+    }, fail("teklifler")));
+    unsubs.push(f.onSnapshot(f.doc(f.db, "sales", "settings"), function (s) {
+      data.sales = (s.exists() && s.data()) || null;
+      data.loaded.sales = true; onChange();
+    }, fail("teklif ayarları")));
+    unsubs.push(f.onSnapshot(f.doc(f.db, "sales", "catalog"), function (s) {
+      const d = (s.exists() && s.data()) || {};
+      data.products = Array.isArray(d.products) ? d.products.slice() : [];
+      data.loaded.products = true; onChange();
+    }, fail("ürün kataloğu")));
+  } else {
+    data.quotes = []; data.sales = null; data.products = [];
+  }
 }
 
 export function stopAll() {
