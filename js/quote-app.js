@@ -274,23 +274,32 @@ function fileName(q) {
   return (Q.quoteLabel(q) + " " + c).replace(/[\\/:*?"<>|]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-async function doPrint(draft) {
+function doPrint(draft) {
+  /* Safari yazdirma penceresini yalnizca dokunusun dogrudan devaminda acar.
+     Arada await olursa cagri sessizce yok sayilir; bu yuzden fonksiyon senkron. */
   const s = S(), q = s.q;
   let host = document.getElementById("print-root");
   if (!host) { host = document.createElement("div"); host.id = "print-root"; document.body.appendChild(host); }
   const img = (q.id ? s.qImg[q.id] : null) || s.qPendingImage;
   host.innerHTML = QV.documentHtml(q, Q.settings(), img, { draft: draft });
-  await Promise.all(Array.prototype.map.call(host.querySelectorAll("img"), function (im) {
-    return im.decode ? im.decode().catch(function () {}) : Promise.resolve();
-  }));
   const oldTitle = document.title;
   document.title = fileName(q);
+  let cleaned = false;
   const done = function () {
+    if (cleaned) return;
+    cleaned = true;
     document.title = oldTitle; host.innerHTML = "";
     window.removeEventListener("afterprint", done);
   };
+  /* iOS Safari afterprint tetiklemiyor; zaman asimi yedegi birakiliyor. */
   window.addEventListener("afterprint", done);
-  window.print();
+  setTimeout(done, 60000);
+  try {
+    window.print();
+  } catch (err) {
+    done();
+    toast("Tarayici yazdirmayi acamadi. Sayfayi Safari'de acip paylas menusunden yazdirin.", "error");
+  }
 }
 
 /* ==================== durum ==================== */
@@ -322,9 +331,13 @@ async function sendAndPrint() {
   if (!patch) return;
   Object.assign(q, patch);
   s.qBase = patch.updatedAt;
-  toast(Q.quoteLabel(q) + " gönderildi olarak işaretlendi ve kilitlendi.");
+  /* Gonderme ag islemi oldugundan yazdirma burada otomatik acilamaz
+     (Safari dokunus baglami disinda print() cagrisini yok sayar).
+     Onizlemeye gecilir, kullanici Yazdir / PDF ile belgeyi alir. */
+  s.qPreview = true;
+  toast(Q.quoteLabel(q) + " gönderildi ve kilitlendi. Yazdır / PDF ile belgeyi alabilirsiniz.");
+  window.scrollTo(0, 0);
   rebuild();
-  await doPrint(false);
 }
 
 async function revise() {
@@ -431,7 +444,7 @@ export async function onClick(e) {
     s.qPreview = true; window.scrollTo(0, 0); rebuild(); return true;
   }
   if (e.target.closest("[data-qpreviewclose]")) { s.qPreview = false; rebuild(); return true; }
-  if ((el = e.target.closest("[data-qprint]"))) { await doPrint(el.getAttribute("data-qprint") === "taslak"); return true; }
+  if ((el = e.target.closest("[data-qprint]"))) { doPrint(el.getAttribute("data-qprint") === "taslak"); return true; }
   if (e.target.closest("[data-qsend]")) { await sendAndPrint(); return true; }
   if ((el = e.target.closest("[data-qstatus]"))) {
     const st = el.getAttribute("data-qstatus");
