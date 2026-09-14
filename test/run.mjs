@@ -161,10 +161,40 @@ ok("kayıtta kullanıcı var", !!d[logs[0]].byName);
 await page.click('[data-nav="kayitlar"]'); await page.waitForTimeout(600);
 ok("kayıtlar ekranı doluyor", (await txt("#main")).includes("proje-olustur") || (await txt("#main")).includes("is-emri"));
 
+console.log("\n10b) Teklif hazırlama ve yazdırma");
+await page.goto("http://localhost:4173/test/index.html");
+await page.waitForTimeout(1200);
+await page.click("[data-nav=teklifler]");
+await page.waitForTimeout(500);
+const seed = await page.$("[data-qseed]");
+if (seed) { await seed.click(); await page.waitForTimeout(1200); }
+ok("teklif katalogu yüklendi", !!(await page.$("[data-qnew]")));
+await page.click("[data-qnew]");
+await page.waitForTimeout(700);
+await page.fill("[data-qf='customer.company']", "Deneme Oyun A.Ş.");
+await page.waitForTimeout(200);
+const prod = await page.$("[data-qaddprod]");
+if (prod) { await prod.click(); await page.waitForTimeout(500); }
+ok("müşteri bilgisi girildi", (await page.inputValue("[data-qf='customer.company']")).includes("Deneme"));
+await page.click("[data-qpreview]");
+await page.waitForTimeout(800);
+ok("önizleme açıldı", !!(await page.$("[data-qprint]")));
+await page.evaluate(function () {
+  window.__printed = false;
+  window.print = function () { window.__printed = true; };
+});
+await page.click("[data-qprint]");
+await page.waitForTimeout(300);
+ok("yazdırma tetiklendi", await page.evaluate(function () { return window.__printed === true; }));
+const src = await (await fetch("http://localhost:4173/js/quote-app.js")).text();
+ok("doPrint senkron kaldı", /\n\s*function doPrint\s*\(/.test(src) && !/async function doPrint\s*\(/.test(src),
+   "Safari print() cagrisini dokunus baglami disinda yok sayar");
+
+
 console.log("\n10) Giriş kapısı");
 await page.goto("http://localhost:4173/test/index.html?as=yabanci@baska.test");
 await page.waitForTimeout(900);
-ok("listede olmayan hesap reddedildi", (await txt("body")).includes("Erişim yetkiniz yok"), await txt("h1"));
+ok("listede olmayan hesap reddedildi", (await txt("body")).includes("Erişim izni iste"), await txt("h1"));
 ok("reddedilen hesabın e-postası gösteriliyor", (await txt("body")).includes("yabanci@baska.test"));
 await page.goto("http://localhost:4173/test/index.html?as=ayse@toysmar.test");
 await page.waitForTimeout(900);
