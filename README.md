@@ -4,7 +4,8 @@ Toysmar Oyun Grupları için satış teklifi ve üretim planlama uygulaması.
 Teklif ürün kataloğundan hazırlanır, A4 belge olarak basılır ve takip edilir;
 kabul edilen teklif üretim projesine dönüşür. Projenin kapsamı 33 adımlık
 katalogdan seçilir, seçilen her adım bir personele **iş emri** olarak atanır,
-termin ve tamamlanma takip edilir.
+termin ve tamamlanma takip edilir. Projeye bağlı olmayan işler için de
+departmanlara **proje dışı iş emri** açılır.
 
 **Canlı adres:** https://eatik16-stack.github.io/toysmar-proje-takip/
 **Giriş:** kendi şifresiyle ya da Google ile — yalnızca yetkilendirilmiş hesaplar
@@ -45,10 +46,10 @@ reddedilen bir talep kişi tarafından tekrar açılamaz.
 | Rol | Gördüğü ekranlar | Düzenleyebildiği iş emirleri |
 |---|---|---|
 | Yönetici | Hepsi | Hepsi |
-| Planlamacı | Panel, Projeler, İşlerim, Yeni Proje, Kayıtlar | Hepsi |
+| Planlamacı | Panel, Projeler, Proje Dışı İşler, İşlerim, Yeni Proje, Kayıtlar | Hepsi |
 | Satış | Teklifler, Projeler (izleme) | Yalnızca kendine atananlar |
-| Şef | Panel, Projeler, İşlerim | Kendi departmanınınkiler |
-| Personel | Projeler, İşlerim | Yalnızca kendine atananlar |
+| Şef | Panel, Projeler, Proje Dışı İşler, İşlerim | Kendi departmanınınkiler |
+| Personel | Projeler, Proje Dışı İşler, İşlerim | Yalnızca kendine atananlar |
 
 Silme, giriş yetkisi verme ve Ayarlar yalnızca yöneticide. Fiyatlar yalnızca
 Yönetici ve Satış rollerine açıktır; diğer rollerde teklif verisi hiç yüklenmez
@@ -64,7 +65,31 @@ yazılıdır. Rol adları iki dosyada birebir aynı olmalı — `js/roles.js` ve
 - Kalıcı silme yalnızca yöneticide ve yalnızca arşivlenmiş projede, çift onayla.
 - Her değişiklik `log` koleksiyonuna kim–ne zaman–ne bilgisiyle yazılır.
   Bu koleksiyon **salt eklemedir**: kurallar update ve delete işlemlerini kapatır,
-  yani geçmiş hiç kimse tarafından değiştirilemez.
+  yani geçmiş hiç kimse tarafından değiştirilemez. Kayıt başkası adına ya da
+  başka bir tarihle de yazılamaz: kurallar `by` alanının giriş yapan kişinin
+  e-postası, `at` alanının sunucu saati olmasını şart koşar.
+
+## Proje dışı işler
+
+Bakım, tamir, numune, atölye düzenleme gibi bir projeye bağlı olmayan işler için
+departmanlara ya da kişilere iş emri açılır.
+
+- **Proje Dışı İşler** sekmesinde *Yeni iş emri* (yönetici ve planlamacı): iş adı,
+  açıklama, departman, sorumlu (boş bırakılırsa departmanın işi), termin, takip
+  türü (tamamlandı işareti ya da gereken adet) ve **Acil** işareti.
+- Liste departman bantlarıyla gruplanır; Açık / Geciken / Acil / Tamamlanan / Tümü
+  süzgeçleri, departman süzgeci ve arama vardır. Departman, sorumlu, termin ve adet
+  proje iş emirlerindeki gibi satırdan değiştirilir; ad, açıklama ve acil işareti
+  “düzenle” ile. Kalıcı silme yalnızca yöneticide.
+- Proje dışı iş emri, `tasks` koleksiyonunda `projectId` boş olan iş emridir. Bu
+  yüzden yetkiler (şef kendi departmanı, personel kendi işi), adet kuralı, İşlerim
+  ekranı ve günlük proje iş emirleriyle birebir aynı çalışır; kural değişikliği
+  gerekmez.
+- **Panel** iki yarıdır: solda *Proje işleri*, sağda *Proje dışı işler*. Her yarıda
+  açık / geciken / 7 gün içinde sayıları ve **dikkat gerektiren** işler listesi
+  vardır. Dikkat gerektiren = termini geçmiş, termini 7 gün içinde olan ya da acil
+  işaretli açık iş (önce geciken, sonra acil, sonra termine göre). Altta departman
+  yükü iki iş türünü ayrı renkte gösterir.
 
 ## Teklif modülü
 
@@ -93,7 +118,11 @@ bilgilerini ve teklif koşullarını yükler. Fiyatlar elle girilir.
   penceresinde “PDF olarak kaydet” ile alınır; dosya adı teklif no + firmadır.
 - *Taslak olarak yazdır*: üzerinde TASLAK yazar, teklif değişmeye açık kalır.
 - *Gönder: kilitle ve yazdır*: müşteri adı, kalem ve tüm fiyatlar tamsa teklifi
-  “gönderildi” yapar ve **kilitler**. Gönderilmiş teklifin kalemleri değişmez.
+  “gönderildi” yapar ve **kilitler**. Kilit yalnızca ekranda değil, `firestore.rules`
+  içinde de yazılı: taslak olmayan teklifte yalnızca durum, iç not, kayıp nedeni
+  ve bağlantı alanları değişebilir; kalemler, fiyatlar, müşteri, KDV, iskonto,
+  toplamlar ve görsel kurallarca kilitlidir. Gönderilmiş teklifi yeniden taslağa
+  almak yalnızca yöneticide.
 - Değişiklik gerekiyorsa **Revize et**: aynı numara `-R1`, `-R2` olarak açılır,
   önceki sürüm olduğu gibi saklanır. Listede yalnızca son sürüm görünür.
 - Durumlar: Taslak → Gönderildi (geçerlilik geçince “Süresi doldu”) →
@@ -147,6 +176,24 @@ Gerçek Firebase'e bağlanmadan, tarayıcıda tüm akışları çalıştırır:
 ```
 node test/run.mjs
 ```
+
+Proje dışı iş emirlerinin senaryosu `test/job-scenario.mjs` içindedir: iş emri
+açma ve zorunlu alanlar, departmana göre sorumlu listesi, pencere açıkken gelen
+veri güncellemesinin yazılanı silmemesi, süzgeçler ve arama, adet kuralı,
+düzenleme, panelin iki yarısının ayrı metrikleri, İşlerim ve silme.
+
+Teklif modülünün senaryosu `test/quote-scenario.mjs` içindedir. İki senaryo da
+sürücüden bağımsızdır: `run.mjs` onları Playwright ile çağırır; Node olmayan bir
+makinede aynı dosyalar tarayıcı konsolunda DOM sürücüsüyle koşturulabilir.
+Teklif senaryosunun kapsadığı konular:
+Türkçe sayı okuma ve yazıyla tutar, kalem ekleme ve toplam, yüzde/tutar iskonto,
+KDV, fiyatsız kalemle gönderimin engellenmesi, gönderince kilitlenme, revizyonda
+`-R1` açılması ve eski sürümün tutarının değişmemesi, kabul edilen tekliften
+proje açma, Satış ve Personel rollerinin fiyat görünürlüğü.
+
+Sahte Firebase `firestore.rules` kurallarını uygulamaz; kural katmanındaki
+kilitler bu testlerle değil, Firebase Console → Rules → *Rules Playground* ya da
+Firestore emülatörüyle doğrulanır.
 
 Playwright kurulu değilse aynı akışlar tarayıcıda elle koşulabilir:
 `test/index.html` bir statik sunucuyla açılır (`file://` ile modüller yüklenmez).

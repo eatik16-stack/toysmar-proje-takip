@@ -90,16 +90,43 @@ service cloud.firestore {
     }
 
     // --- teklifler ------------------------------------------------------
-    // Fiyatlar yalnızca satış rollerine açık. Gönderilmiş teklif silinmez,
-    // iptal edilir; silme yalnızca hiç gönderilmemiş taslakta (yönetici hepsinde).
+    // Fiyatlar yalnızca satış rollerine açık.
+    //
+    // Müşteriye giden belge değişmez: taslak olmayan (gönderilmiş, karara
+    // bağlanmış, iptal ya da revize edilmiş) bir teklifte yalnızca aşağıdaki
+    // alanlar değişebilir. Kalemler, fiyatlar, müşteri, KDV, iskonto ve
+    // toplamlar kilitlidir; değişiklik yeni bir revizyon belgesiyle yapılır.
+    function quoteRef(id) { return /databases/$(database)/documents/quotes/$(id); }
+    function isDraft(d)   { return d.get('status', 'taslak') == 'taslak' && d.get('supersededBy', '') == ''; }
+    function quoteMetaOnly() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+        'status', 'sentAt', 'decidedAt', 'lostReason', 'notes', 'projectId',
+        'supersededBy', 'updatedAt', 'updatedBy', 'updatedByName'
+      ]);
+    }
     match /quotes/{doc} {
-      allow read, create, update: if canSell();
+      allow read:   if canSell();
+      // Yeni teklif ve revizyon her zaman taslak olarak açılır.
+      allow create: if canSell() && request.resource.data.status == 'taslak';
+      allow update: if canSell()
+                    && (isDraft(resource.data) || quoteMetaOnly())
+                    // Revize bağlantısı bir kez kurulur, sonradan değiştirilemez.
+                    && (resource.data.get('supersededBy', '') == ''
+                        || request.resource.data.get('supersededBy', '') == resource.data.get('supersededBy', ''))
+                    // Gönderilmiş teklifi yeniden düzenlemeye açmak yalnızca yöneticide.
+                    && (isAdmin()
+                        || resource.data.get('status', 'taslak') == 'taslak'
+                        || request.resource.data.get('status', 'taslak') != 'taslak');
+      // Gönderilmiş teklif silinmez, iptal edilir; satış yalnızca taslağı siler.
       allow delete: if isAdmin()
                     || (canSell() && resource.data.get('status', '') == 'taslak');
     }
     // Teklife eklenen yerleşim görseli (belge başına bir görsel).
+    // Gönderilmiş teklifin görseli de belgenin parçasıdır, değişmez.
     match /quoteFiles/{doc} {
-      allow read, write: if canSell();
+      allow read:  if canSell();
+      allow write: if canSell()
+                   && (isAdmin() || !exists(quoteRef(doc)) || isDraft(get(quoteRef(doc)).data));
     }
     // Teklif ayarları, ürün kataloğu ve teklif numarası sayacı.
     match /sales/{doc} {
@@ -109,9 +136,14 @@ service cloud.firestore {
     // --- değişiklik günlüğü ---------------------------------------------
     // Salt ekleme: yazılan bir kayıt hiç kimse tarafından değiştirilemez
     // veya silinemez. "Veri kaybolmasın" güvencesi burada.
+    // Kayıt başkası adına ya da geçmiş/gelecek tarihle yazılamaz: "by" giriş
+    // yapan kişinin e-postası, "at" sunucu saati olmak zorunda.
     match /log/{doc} {
       allow read:   if isAllowed();
-      allow create: if isAllowed();
+      allow create: if isAllowed()
+                    && request.resource.data.keys().hasOnly(['at', 'atISO', 'by', 'byName', 'action', 'target', 'detail'])
+                    && request.resource.data.by == email()
+                    && request.resource.data.at == request.time;
       allow update: if false;
       allow delete: if false;
     }
