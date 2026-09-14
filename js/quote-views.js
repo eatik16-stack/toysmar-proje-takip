@@ -3,7 +3,7 @@
 
 import { esc, fmtDate, fmtDateTime, daysBetween, todayISO } from "./util.js";
 import { data } from "./store.js";
-import { canSee } from "./auth.js";
+import { canSee, isAdmin } from "./auth.js";
 import {
   CURRENCIES, VAT_RATES, cur, parseNum, fmtNum, fmtQty, fmtInputMoney, fmtMoney, fmtMoneyShort,
   lineTotal, calcTotals, amountWords
@@ -299,7 +299,8 @@ function statusActions(S) {
     row.push('<button class="btn btn-sm" data-qstatus="kabul">Kabul edildi</button>');
     row.push('<button class="btn btn-sm" data-qstatus="red">Reddedildi</button>');
     row.push('<button class="btn btn-sm" data-qrevise="1">Revize et</button>');
-    row.push(confirmBtn(S, "qback:" + id, "Taslağa geri al"));
+    // Gönderilmiş belgeyi yeniden düzenlemeye açmak kurallarda da yalnızca yöneticide.
+    if (isAdmin()) row.push(confirmBtn(S, "qback:" + id, "Taslağa geri al"));
     row.push(confirmBtn(S, "qcancel:" + id, "İptal et"));
   } else if (q.status === "kabul") {
     if (q.projectId) row.push('<button class="btn btn-sm btn-pri" data-open-proj="' + esc(q.projectId) + '">Üretim projesine git</button>');
@@ -510,7 +511,7 @@ function previewHtml(S) {
     '<div class="row-actions">';
   if (draft) {
     h += '<button class="btn" data-qprint="taslak" title="Üzerinde TASLAK yazar, teklif kilitlenmez">Taslak olarak yazdır</button>' +
-      '<button class="btn btn-pri" data-qsend="1" title="Teklifi gönderildi olarak işaretler, içeriği kilitler ve yazdırır">Gönder: kilitle ve yazdır</button>';
+      '<button class="btn btn-pri" data-qsend="1" title="Teklifi gönderildi olarak işaretler ve içeriği kilitler; ardından Yazdır / PDF ile belge alınır">Gönder ve kilitle</button>';
   } else {
     h += '<button class="btn btn-pri" data-qprint="1">Yazdır / PDF</button>';
   }

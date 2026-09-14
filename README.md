@@ -117,8 +117,11 @@ bilgilerini ve teklif koşullarını yükler. Fiyatlar elle girilir.
 - *Önizle* ekranı müşterinin göreceği A4 belgeyi gösterir. PDF, yazdırma
   penceresinde “PDF olarak kaydet” ile alınır; dosya adı teklif no + firmadır.
 - *Taslak olarak yazdır*: üzerinde TASLAK yazar, teklif değişmeye açık kalır.
-- *Gönder: kilitle ve yazdır*: müşteri adı, kalem ve tüm fiyatlar tamsa teklifi
-  “gönderildi” yapar ve **kilitler**. Kilit yalnızca ekranda değil, `firestore.rules`
+- *Gönder ve kilitle*: müşteri adı, kalem ve tüm fiyatlar tamsa teklifi
+  “gönderildi” yapar ve **kilitler**; önizlemede kalınır, belge *Yazdır / PDF* ile
+  alınır. Yazdırma bilerek ayrı bir dokunuştur: Safari `print()` çağrısını dokunuşun
+  hemen ardından gelmezse yok sayar, bu yüzden `doPrint` senkron tutulur
+  (`run.mjs` 10b bunu denetler). Kilit yalnızca ekranda değil, `firestore.rules`
   içinde de yazılı: taslak olmayan teklifte yalnızca durum, iç not, kayıp nedeni
   ve bağlantı alanları değişebilir; kalemler, fiyatlar, müşteri, KDV, iskonto,
   toplamlar ve görsel kurallarca kilitlidir. Gönderilmiş teklifi yeniden taslağa

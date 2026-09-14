@@ -6,7 +6,7 @@ import {
   numOf, needOf, doneOf, shortOf
 } from "./util.js";
 import {
-  session, canSee, canSell, myEmail, myName,
+  session, canSee, canSell, isAdmin, myEmail, myName,
   watchSession, signIn, signInWithPassword, signOutNow, resetPassword,
   registerAndRequest, submitRequest, resendVerification, refreshSession
 } from "./auth.js";
@@ -31,6 +31,9 @@ const S = {
   confirmTimer: null,
   log: null,
   focusNext: null,
+  jobFilter: "acik",  // proje dışı işler süzgeci: acik | gecikti | acil | tamam | tumu
+  jobDept: "",
+  jobSearch: "",
   booted: false
 };
 
@@ -204,6 +207,7 @@ function render() {
   if (S.view === "panel") html = V.viewPanel(S);
   else if (S.view === "projeler") html = V.viewProjects(S);
   else if (S.view === "proje") html = V.viewProject(S);
+  else if (S.view === "projedisi") html = V.viewJobs(S);
   else if (S.view === "isler") html = V.viewMyWork(S);
   else if (S.view === "yeni") { if (!S.wizard) S.wizard = newWizard(); html = V.viewWizard(S); }
   else if (S.view === "teklifler") html = QV.viewQuotes(S);
@@ -457,7 +461,13 @@ async function runConfirmed(key) {
 
   if (kind.charAt(0) === "q" && await QA.confirmed(kind, id)) { S.qRebuild = true; render(); return; }
 
-  if (kind === "delproj") {
+  if (kind === "deljob") {
+    const t = byId(data.tasks, id);
+    await guard(store.deleteTask(id, t && t.name));
+    S.modal = null;
+    toast("İş emri silindi.");
+  }
+  else if (kind === "delproj") {
     const p = byId(data.projects, id);
     const ids = store.projTasks(id).map(function (t) { return t.id; });
     await guard(store.hardDeleteProject(id, p && p.name, ids));
@@ -499,8 +509,13 @@ async function runConfirmed(key) {
 
 function renderModal() {
   const host = document.getElementById("modal-root");
-  if (!S.modal) { host.innerHTML = ""; return; }
+  if (!S.modal) { host.innerHTML = ""; host.removeAttribute("data-mkey"); return; }
   const m = S.modal;
+  // Açık pencere her veri güncellemesinde yeniden çizilmez; yoksa yazılanlar silinirdi.
+  // Yalnızca başka bir pencere açılınca ya da onay düğmesi durumu değişince çizilir.
+  const key = m.kind + ":" + (m.id || "") + ":" + (S.confirm || "");
+  if (host.firstChild && host.getAttribute("data-mkey") === key) return;
+  host.setAttribute("data-mkey", key);
   let body = "", title = "", save = "Kaydet";
 
   if (m.kind === "proj") {
@@ -564,6 +579,38 @@ function renderModal() {
       'E-posta yazıp rol seçerseniz kişi şifresiyle ya da Google hesabıyla girebilir. ' +
       'Rol, gireceği ekranları belirler. “Giremez” seçilirse kayıt kalır ama giriş yapamaz.</p></div>';
   }
+  else if (m.kind === "job") {
+    const t = m.id ? byId(data.tasks, m.id) : null;
+    if (t) {
+      title = "Proje dışı iş emrini düzenle";
+      body = '<div class="form">' +
+        '<div class="f full"><label for="m-name">İş</label><input id="m-name" data-m="name" type="text" value="' + esc(t.name) + '"></div>' +
+        '<div class="f full"><label for="m-spec">Açıklama</label><textarea id="m-spec" data-m="spec">' + esc(t.spec || "") + '</textarea></div>' +
+        '<label class="f full mcheck"><input id="m-urgent" data-m="urgent" type="checkbox"' + (t.urgent ? " checked" : "") + '> ' +
+        '<span><strong>Acil</strong> — panelde termini beklemeden dikkat gerektirenlere düşer</span></label>' +
+        '<p class="muted full" style="grid-column:1/-1; margin:0; font-size:12.5px">Departman, sorumlu, termin ve adet satırdan değiştirilir. ' +
+        esc(t.createdByName ? "Açan: " + t.createdByName + " · " : "") + esc(t.createdAt ? String(t.createdAt).slice(0, 10) : "") + '</p>' +
+        (isAdmin() ? '<div class="full" style="grid-column:1/-1">' + V.delBtn(S, t.id, "İş emrini kalıcı sil", "deljob") + '</div>' : '') +
+        '</div>';
+    } else {
+      title = "Yeni proje dışı iş emri"; save = "İş emrini aç";
+      const d0 = (data.depts[0] || {}).id || "";
+      body = '<div class="form">' +
+        '<div class="f full"><label for="m-name">İş *</label><input id="m-name" data-m="name" type="text" placeholder="örn. Kaynak makinesi bakımı, numune panel, atölye düzenleme"></div>' +
+        '<div class="f full"><label for="m-spec">Açıklama</label><textarea id="m-spec" data-m="spec" placeholder="Ne yapılacak, ölçü, malzeme…"></textarea></div>' +
+        '<div class="f"><label for="m-dept">Departman *</label><select id="m-dept" data-m="dept">' +
+        data.depts.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>'; }).join("") + '</select></div>' +
+        '<div class="f"><label for="m-assignee">Sorumlu</label><select id="m-assignee" data-m="assignee">' + assigneeOptions(d0, "") + '</select></div>' +
+        mf("dueDate", "Termin", "", "date") +
+        '<div class="f"><label for="m-type">Takip</label><select id="m-type" data-m="type">' +
+        '<option value="check">Tamamlandı işareti</option><option value="qty">Adet girilir</option></select></div>' +
+        '<div class="f" data-qtyonly hidden><label for="m-qty">Gereken adet *</label><input id="m-qty" data-m="qty" type="text" inputmode="decimal"></div>' +
+        '<div class="f" data-qtyonly hidden><label for="m-unit">Birim</label><input id="m-unit" data-m="unit" type="text" placeholder="adet / metre / m²"></div>' +
+        '<label class="f full mcheck"><input id="m-urgent" data-m="urgent" type="checkbox"> ' +
+        '<span><strong>Acil</strong> — panelde termini beklemeden dikkat gerektirenlere düşer</span></label>' +
+        '</div>';
+    }
+  }
   else if (m.kind === "dept") {
     title = "Departman ekle";
     body = '<div class="f"><label for="m-name">Departman adı</label>' +
@@ -592,6 +639,13 @@ function renderModal() {
     '<button class="btn btn-pri" data-msave="1">' + esc(save) + '</button></div></div></div>';
 }
 
+function assigneeOptions(deptId, selected) {
+  return '<option value="">Atanmadı — departmanın işi</option>' +
+    data.people.filter(function (p) { return !deptId || p.dept === deptId; }).map(function (p) {
+      return '<option value="' + esc(p.id) + '"' + (p.id === selected ? " selected" : "") + '>' + esc(p.name) + '</option>';
+    }).join("");
+}
+
 function mf(key, label, val, type) {
   return '<div class="f"><label for="m-' + key + '">' + esc(label) + '</label>' +
     '<input id="m-' + key + '" type="' + type + '" data-m="' + key + '" value="' + esc(val == null ? "" : val) + '"></div>';
@@ -603,7 +657,32 @@ async function saveModal() {
   const val = function (k) { const e = host.querySelector('[data-m="' + k + '"]'); return e ? e.value : ""; };
 
   try {
-    if (m.kind === "proj") {
+    if (m.kind === "job") {
+      const name = val("name").trim();
+      if (!name) { toast("İşin adını yazın."); return; }
+      const urgent = !!(host.querySelector("#m-urgent") || {}).checked;
+      if (m.id) {
+        await guard(store.saveTask(m.id, { name: name, spec: val("spec").trim(), urgent: urgent },
+          "proje dışı iş güncellendi: " + name));
+        toast("İş emri güncellendi.");
+      } else {
+        const type = val("type") || "check";
+        if (type === "qty" && !numOf(val("qty"))) { toast("Adet girilen işte gereken adedi yazın."); return; }
+        const now = new Date().toISOString();
+        const job = {
+          id: uid(), projectId: "", stepId: "", group: "", name: name, spec: val("spec").trim(),
+          type: type, unit: type === "qty" ? (val("unit").trim() || "adet") : "",
+          dept: val("dept"), assignee: val("assignee"),
+          qty: type === "qty" ? val("qty").trim() : "", doneQty: "", shortClosed: false,
+          orderStatus: "", note: "", dueDate: val("dueDate"), status: "bekliyor", urgent: urgent,
+          completedAt: "", completedBy: "", completedByName: "",
+          order: 0, createdAt: now, createdBy: myEmail(), createdByName: myName()
+        };
+        await guard(store.createJob(job));
+        toast("“" + name + "” iş emri " + store.deptName(job.dept) + " departmanına açıldı.");
+      }
+    }
+    else if (m.kind === "proj") {
       await guard(store.saveProject(m.id, {
         name: val("name"), theme: val("theme"), customer: val("customer"), phone: val("phone"),
         panelCount: val("panelCount") ? Number(val("panelCount")) : null,
@@ -720,6 +799,14 @@ document.addEventListener("click", async function (e) {
 
   if (!e.target.closest("[data-confirm]") && await QA.onClick(e)) return;
 
+  if (e.target.closest("[data-newjob]")) {
+    S.modal = { kind: "job", id: null }; renderModal();
+    const n = document.getElementById("m-name"); if (n) n.focus();
+    return;
+  }
+  if ((el = e.target.closest("[data-editjob]"))) { S.modal = { kind: "job", id: el.getAttribute("data-editjob") }; renderModal(); return; }
+  if ((el = e.target.closest("[data-jobfilter]"))) { S.jobFilter = el.getAttribute("data-jobfilter"); render(); return; }
+
   if ((el = e.target.closest("[data-nav]"))) { go(el.getAttribute("data-nav")); return; }
   if ((el = e.target.closest("[data-projview]"))) { S.projView = el.getAttribute("data-projview"); render(); return; }
   if (e.target.closest("[data-togglearch]")) { S.showArchived = !S.showArchived; render(); return; }
@@ -800,10 +887,25 @@ document.addEventListener("click", async function (e) {
   if (e.target.closest("[data-msave]")) { await saveModal(); return; }
 });
 
-document.addEventListener("input", function (e) { QA.onInput(e); });
+document.addEventListener("input", function (e) {
+  if (e.target && e.target.id === "job-search") { S.jobSearch = e.target.value; render(); return; }
+  QA.onInput(e);
+});
 
 document.addEventListener("change", async function (e) {
   const t = e.target;
+
+  if (t.id === "job-dept") { S.jobDept = t.value; render(); return; }
+  // İş emri penceresi: departman değişince sorumlu listesi o departmanın kişileri olur.
+  if (S.modal && S.modal.kind === "job" && t.id === "m-dept") {
+    const a = document.getElementById("m-assignee");
+    if (a) a.innerHTML = assigneeOptions(t.value, "");
+    return;
+  }
+  if (S.modal && S.modal.kind === "job" && t.id === "m-type") {
+    document.querySelectorAll("#modal-root [data-qtyonly]").forEach(function (x) { x.hidden = t.value !== "qty"; });
+    return;
+  }
 
   if (await QA.onChange(e)) return;
 

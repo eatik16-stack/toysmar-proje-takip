@@ -20,7 +20,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
+const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".json": "application/json" };
 
 const server = http.createServer(function (req, res) {
   const url = req.url.split("?")[0];
@@ -194,11 +194,13 @@ ok("doPrint senkron kaldı", /\n\s*function doPrint\s*\(/.test(src) && !/async f
 console.log("\n10) Giriş kapısı");
 await page.goto("http://localhost:4173/test/index.html?as=yabanci@baska.test");
 await page.waitForTimeout(900);
-ok("listede olmayan hesap reddedildi", (await txt("body")).includes("Erişim izni iste"), await txt("h1"));
+// Listede olmayan hesap uygulamaya giremez; kendisine erişim talebi formu çıkar.
+ok("listede olmayan hesap uygulamaya giremedi", (await page.locator("#nav").count()) === 0);
+ok("listede olmayan hesaba erişim talebi formu çıktı", (await txt("h1")) === "Erişim izni iste", await txt("h1"));
 ok("reddedilen hesabın e-postası gösteriliyor", (await txt("body")).includes("yabanci@baska.test"));
 await page.goto("http://localhost:4173/test/index.html?as=ayse@toysmar.test");
 await page.waitForTimeout(900);
-ok("yetkili personel girebildi", !(await txt("body")).includes("Erişim yetkiniz yok"), await txt("h1"));
+ok("yetkili personel girebildi", (await page.locator("#nav").count()) === 1 && !(await txt("body")).includes("Erişim izni iste"), await txt("h1"));
 ok("personelde yönetici menüsü yok", !(await txt("#nav")).includes("Ayarlar"), await txt("#nav"));
 await page.goto("http://localhost:4173/test/index.html?as=yok");
 await page.waitForTimeout(900);
@@ -269,6 +271,74 @@ await page.fill("#g-pass", "yanlissifre");
 await page.click('#form-login button[type="submit"]'); await page.waitForTimeout(700);
 ok("yanlış şifre reddedildi", /hatalı/i.test(await toastText()), await toastText());
 ok("yanlış şifrede giriş ekranında kalındı", (await txt("body")).includes("Giriş yap"));
+
+console.log("\n15) Teklif modülü");
+await page.goto("http://localhost:4173/test/index.html");
+await page.waitForTimeout(900);
+const driver = {
+  ok: ok,
+  click: (s) => page.click(s),
+  fill: (s, v) => page.fill(s, v),
+  change: (s) => page.dispatchEvent(s, "change"),
+  select: (s, v) => page.selectOption(s, v),
+  press: (s, k) => page.press(s, k),
+  wait: (ms) => page.waitForTimeout(ms),
+  db: () => page.evaluate(() => window.__MOCK_DB__),
+  text: (s) => page.textContent(s),
+  count: (s) => page.locator(s).count(),
+  prop: (s, p) => page.$eval(s, (el, name) => el[name], p),
+  eval: (fn) => page.evaluate(fn)
+};
+const { quoteScenario } = await import("./quote-scenario.mjs");
+await quoteScenario(driver);
+
+console.log("\n16) Fiyatlar yalnızca satış rollerinde");
+await page.evaluate(() => {
+  const d = JSON.parse(sessionStorage.getItem("toysmar.mockdb") || "{}");
+  d["allowed/satis@toysmar.test"] = { name: "Ayşe Satış", role: "satis", dept: "", personId: "" };
+  sessionStorage.setItem("toysmar.mockdb", JSON.stringify(d));
+  localStorage.setItem("toysmar.view", "teklifler");
+});
+await page.goto("http://localhost:4173/test/index.html?as=satis@toysmar.test");
+await page.waitForTimeout(900);
+nav = await txt("#nav");
+ok("satış Teklifler görüyor", nav.includes("Teklifler"), nav);
+ok("satışta Panel ve Yeni Proje yok", !nav.includes("Panel") && !nav.includes("Yeni Proje"), nav);
+await page.click('[data-qfilter="tumu"]'); await page.waitForTimeout(300);
+ok("satış teklif listesini okuyabiliyor", (await txt("#main")).includes("TKL-"), await txt("h1"));
+// “Taslağa geri al” yalnızca gönderilmiş teklifte çıkar; satışa gönderilmiş bir teklif açtırılır.
+await page.evaluate(() => {
+  const d = JSON.parse(sessionStorage.getItem("toysmar.mockdb") || "{}");
+  const k = Object.keys(d).find((x) => x.startsWith("quotes/") && d[x].customer && d[x].customer.company === "Deneme Oyun A.Ş.");
+  if (k) { d[k].status = "gonderildi"; d[k].sentAt = new Date().toISOString(); }
+  sessionStorage.setItem("toysmar.mockdb", JSON.stringify(d));
+});
+await page.goto("http://localhost:4173/test/index.html?as=satis@toysmar.test");
+await page.waitForTimeout(900);
+await page.click('[data-qfilter="gonderildi"]'); await page.waitForTimeout(300);
+await page.click("tr[data-qopen]"); await page.waitForTimeout(400);
+ok("satış gönderilmiş teklifi açtı", (await page.locator("[data-qrevise]").count()) === 1, await txt("h1"));
+ok("satışta “Taslağa geri al” yok (yalnızca yönetici)", (await page.locator('[data-confirm^="qback"]').count()) === 0);
+await page.evaluate(() => localStorage.setItem("toysmar.view", "teklifler"));
+await page.goto("http://localhost:4173/test/index.html?as=ayse@toysmar.test");
+await page.waitForTimeout(900);
+nav = await txt("#nav");
+ok("personelde Teklifler yok", !nav.includes("Teklifler"), nav);
+ok("personel teklif ekranına zorla giremiyor", (await txt("h1")) !== "Teklifler", await txt("h1"));
+ok("personelde fiyat görünmüyor", !(await txt("body")).includes("₺"));
+
+console.log("\n17) Proje dışı iş emirleri");
+await page.evaluate(() => localStorage.setItem("toysmar.view", "panel"));
+await page.goto("http://localhost:4173/test/index.html");
+await page.waitForTimeout(900);
+const { jobScenario } = await import("./job-scenario.mjs");
+await jobScenario(driver);
+await page.goto("http://localhost:4173/test/index.html?as=ayse@toysmar.test");
+await page.waitForTimeout(900);
+nav = await txt("#nav");
+ok("personel Proje Dışı İşler sekmesini görüyor", nav.includes("Proje Dışı İşler"), nav);
+await page.click('[data-nav="projedisi"]'); await page.waitForTimeout(400);
+ok("personel proje dışı iş emri açamıyor", (await page.locator("[data-newjob]").count()) === 0);
 
 console.log("\nJS hataları: " + (errors.length ? errors.slice(0, 3).join(" | ") : "yok"));
 if (errors.length) fail++;

@@ -7,7 +7,7 @@
 
 import { uid, byId, lsGet, lsSet, toast } from "./util.js";
 import { data, writeLog } from "./store.js";
-import { myEmail } from "./auth.js";
+import { myEmail, isAdmin } from "./auth.js";
 import { parseNum, fmtQty, fmtInputMoney, fmtMoney, lineTotal, calcTotals } from "./money.js";
 import * as Q from "./quotes.js";
 import * as QV from "./quote-views.js";
@@ -367,7 +367,12 @@ export async function confirmed(kind, id) {
     toast("Taslak silindi.");
     return true;
   }
-  if (kind === "qback") { await changeStatus("taslak", "Teklif taslağa alındı, yeniden düzenlenebilir."); return true; }
+  if (kind === "qback") {
+    // Kurallarda da yalnızca yönetici: gönderilmiş belge yeniden düzenlemeye açılmasın.
+    if (!isAdmin()) { toast("Gönderilmiş teklifi yalnızca yönetici taslağa alabilir. Değişiklik için Revize et."); return true; }
+    await changeStatus("taslak", "Teklif taslağa alındı, yeniden düzenlenebilir.");
+    return true;
+  }
   if (kind === "qcancel") { await changeStatus("iptal", "Teklif iptal edildi. Kaydı saklanıyor."); return true; }
   if (kind === "qundo") { await changeStatus("gonderildi", "Karar geri alındı."); return true; }
   if (kind === "qproddel") {

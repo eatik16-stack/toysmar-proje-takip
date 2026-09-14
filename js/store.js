@@ -169,6 +169,22 @@ export async function addTasks(projectId, tasks) {
   writeLog("adim-ekle", projectId, tasks.length + " adım eklendi");
 }
 
+// Proje dışı iş emri: projectId boş olan iş emridir. Aynı koleksiyonda durduğu
+// için yetki, adet kuralı ve İşlerim ekranı proje iş emirleriyle aynı çalışır.
+export async function createJob(task) {
+  const f = await fb();
+  const id = task.id; const body = Object.assign({}, task); delete body.id;
+  await f.setDoc(f.doc(f.db, "tasks", id), body);
+  writeLog("is-emri-olustur", id, "proje dışı: " + task.name + " · " + deptName(task.dept));
+}
+
+// Kalıcı silme yalnızca yöneticide (kurallar da öyle).
+export async function deleteTask(id, name) {
+  const f = await fb();
+  await f.deleteDoc(f.doc(f.db, "tasks", id));
+  writeLog("is-emri-sil", id, (name || "") + " silindi");
+}
+
 export async function archiveProject(id, on, name) {
   const f = await fb();
   await f.updateDoc(f.doc(f.db, "projects", id), {
@@ -291,6 +307,20 @@ export function progress(pid) {
 
 export function activeProjects() {
   return data.projects.filter(function (p) { return !p.archived; });
+}
+
+export function isJob(t) { return !!t && !t.projectId; }
+
+// Proje dışı iş emirleri.
+export function jobs() {
+  return data.tasks.filter(isJob);
+}
+
+// Aktif (arşivlenmemiş) projelerin iş emirleri.
+export function activeProjectTasks() {
+  const ids = {};
+  activeProjects().forEach(function (p) { ids[p.id] = true; });
+  return data.tasks.filter(function (t) { return t.projectId && ids[t.projectId]; });
 }
 
 export function deptName(id) {

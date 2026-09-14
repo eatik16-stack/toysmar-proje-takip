@@ -6,7 +6,7 @@ import {
 } from "./util.js";
 import {
   data, projTasks, progress, activeProjects, deptName, personName, mePerson,
-  canEditTask, pendingRequests
+  canEditTask, pendingRequests, jobs, isJob, activeProjectTasks
 } from "./store.js";
 import { session, isAdmin, canPlan, canSee, myRole, myName, myEmail } from "./auth.js";
 import { ROLE_ORDER, roleDef, roleLabel } from "./roles.js";
@@ -79,8 +79,10 @@ export function taskRow(t) {
   const need = needOf(t), made = doneOf(t), short = shortOf(t);
 
   let h = '<div class="trow' + (done ? " done" : "") + '" data-task="' + esc(t.id) + '">';
-  h += '<div class="c-name"><div class="tn">' + esc(t.name) + '</div>';
+  h += '<div class="c-name"><div class="tn">' + esc(t.name) +
+    (isJob(t) && plan ? ' <button class="linkish tedit" data-editjob="' + esc(t.id) + '">düzenle</button>' : '') + '</div>';
   const sub = [];
+  if (t.urgent && !done) sub.push('<span class="tag tag-urgent">Acil</span>');
   if (t.spec) sub.push(esc(t.spec));
   if (t.orderStatus) sub.push('<span class="tag">' + esc(t.orderStatus) + '</span>');
   if (t.shortClosed) sub.push('<span class="tag tag-warn">eksik kapatıldı ' + made + '/' + need + '</span>');
@@ -122,9 +124,12 @@ export function navItems(S) {
   const openQuotes = data.quotes.filter(function (q) {
     return !q.supersededBy && (q.status === "taslak" || q.status === "gonderildi");
   }).length;
+  // Kişinin yürütebildiği açık proje dışı işler: planlayana hepsi, şefe departmanı, personele kendisi.
+  const openJobs = jobs().filter(function (t) { return t.status !== "tamam" && canEditTask(t); }).length;
   const items = [
     { id: "panel", ico: "◧", label: "Panel" },
     { id: "projeler", ico: "▦", label: "Projeler", count: activeProjects().length },
+    { id: "projedisi", ico: "◇", label: "Proje Dışı İşler", count: openJobs || null },
     { id: "isler", ico: "✓", label: "İşlerim", count: mineOpen || null },
     { id: "yeni", ico: "＋", label: "Yeni Proje" },
     { id: "teklifler", ico: "₺", label: "Teklifler", count: openQuotes || null },
@@ -180,67 +185,112 @@ export function viewSetup() {
 
 /* ================= panel ================= */
 
-export function viewPanel(S) {
-  const active = activeProjects();
-  const activeIds = {};
-  active.forEach(function (p) { activeIds[p.id] = true; });
-  const open = data.tasks.filter(function (t) { return t.status !== "tamam" && activeIds[t.projectId]; });
+// Açık / geciken / 7 gün içinde / acil sayımları — panelin iki yarısı ve sekme aynı hesabı kullanır.
+export function workStats(list) {
+  const open = list.filter(function (t) { return t.status !== "tamam"; });
   const late = open.filter(function (t) { const d = daysBetween(t.dueDate); return d !== null && d < 0; });
   const soon = open.filter(function (t) { const d = daysBetween(t.dueDate); return d !== null && d >= 0 && d <= 7; });
-  const allT = data.tasks.filter(function (t) { return activeIds[t.projectId]; });
+  const urgent = open.filter(function (t) { return !!t.urgent; });
+  return { all: list, open: open, late: late, soon: soon, urgent: urgent, done: list.length - open.length };
+}
+
+// Dikkat gerektiren: geciken, termini 7 gün içinde olan ya da acil işaretli açık iş.
+// Sıra: önce geciken, sonra acil, sonra termine göre.
+export function attentionOf(list) {
+  return list.filter(function (t) {
+    if (t.status === "tamam") return false;
+    const d = daysBetween(t.dueDate);
+    return (d !== null && d <= 7) || !!t.urgent;
+  }).sort(attentionOrder);
+}
+
+function attentionOrder(a, b) {
+  const da = daysBetween(a.dueDate), db = daysBetween(b.dueDate);
+  const la = da !== null && da < 0 ? 0 : 1, lb = db !== null && db < 0 ? 0 : 1;
+  if (la !== lb) return la - lb;
+  if (!!a.urgent !== !!b.urgent) return a.urgent ? -1 : 1;
+  return String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999"));
+}
+
+function dueText(t) {
+  const d = daysBetween(t.dueDate);
+  if (d === null) return '<span class="muted">termin yok</span>';
+  return '<span class="mono">' + fmtDate(t.dueDate) + '</span><span class="muted"> (' +
+    (d < 0 ? Math.abs(d) + " gün geç" : d === 0 ? "bugün" : d + " gün") + ')</span>';
+}
+
+function attentionTable(list, job) {
+  const MAX = 8;
+  if (!list.length) {
+    return '<div class="empty"><h3>Dikkat gerektiren iş yok</h3>' +
+      '<p>Geciken, termini 7 gün içinde olan ya da acil açık iş bulunmuyor.</p></div>';
+  }
+  let h = '<div class="tw"><table class="att"><thead><tr><th>İş</th><th>Termin</th><th>Durum</th></tr></thead><tbody>';
+  list.slice(0, MAX).forEach(function (t) {
+    const st = taskState(t);
+    const p = job ? null : byId(data.projects, t.projectId);
+    const where = job ? deptName(t.dept) : (p ? p.name : "—");
+    h += '<tr class="click" ' + (job ? 'data-nav="projedisi"' : 'data-open-proj="' + esc(t.projectId) + '"') + '>' +
+      '<td><div class="t-name">' + esc(t.name) + (t.urgent ? ' <span class="tag tag-urgent">Acil</span>' : '') + '</div>' +
+      '<div class="muted att-sub">' + esc(where) + ' · ' + esc(personName(t.assignee) || "Atanmadı") + '</div></td>' +
+      '<td style="white-space:nowrap">' + dueText(t) + '</td>' +
+      '<td><span class="st st-' + st + '">' + esc(stateLabel(st)) + '</span></td></tr>';
+  });
+  h += '</tbody></table></div>';
+  if (list.length > MAX) {
+    h += '<div class="panel-body att-more"><button class="btn btn-sm btn-ghost" ' +
+      (job ? 'data-nav="projedisi"' : 'data-nav="projeler"') + '>+' + (list.length - MAX) + ' iş daha →</button></div>';
+  }
+  return h;
+}
+
+export function viewPanel(S) {
+  const active = activeProjects();
+  const P = workStats(activeProjectTasks());
+  const J = workStats(jobs());
+  const pAtt = attentionOf(P.all), jAtt = attentionOf(J.all);
 
   let h = '<div class="page-head"><div><h1>Panel</h1><div class="sub">' +
-    fmtDate(todayISO()) + ' · üretim planlama durumu</div></div>' +
-    '<button class="btn btn-pri" data-nav="yeni">Yeni proje aç</button></div>';
+    fmtDate(todayISO()) + ' · proje işleri ve proje dışı işler</div></div><div class="row-actions">' +
+    (canSee("yeni") ? '<button class="btn" data-nav="yeni">Yeni proje</button>' : '') +
+    (canPlan() ? '<button class="btn btn-pri" data-newjob="1">Proje dışı iş emri</button>' : '') +
+    '</div></div>';
 
-  h += '<div class="kpis">' +
-    kpi(active.length, "Aktif proje", data.projects.length + " proje kayıtlı", "") +
-    kpi(open.length, "Açık iş emri", allT.length + " iş emrinin " + (allT.length - open.length) + " tanesi bitti", "") +
-    kpi(late.length, "Geciken iş", late.length ? "Termini geçti" : "Gecikme yok", late.length ? "alert" : "") +
-    kpi(soon.length, "7 gün içinde", "Termini yaklaşan iş", soon.length ? "warn" : "") + '</div>';
+  h += '<div class="split">';
 
-  const att = late.concat(soon).sort(function (a, b) {
-    return String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999"));
-  }).slice(0, 9);
+  h += '<section class="side" aria-label="Proje işleri"><div class="side-head"><h2>Proje işleri</h2>' +
+    '<span class="muted">' + active.length + ' aktif proje</span>' +
+    '<button class="btn btn-sm btn-ghost" data-nav="projeler">Projeler →</button></div>' +
+    '<div class="kpis">' +
+    kpi(P.open.length, "Açık iş", P.done + " / " + P.all.length + " bitti", "") +
+    kpi(P.late.length, "Geciken", P.late.length ? "Termini geçti" : "Gecikme yok", P.late.length ? "alert" : "") +
+    kpi(P.soon.length, "7 gün içinde", "Termini yaklaşan", P.soon.length ? "warn" : "") +
+    kpi(active.length, "Aktif proje", data.projects.length + " proje kayıtlı", "") + '</div>' +
+    '<div class="panel"><div class="panel-head"><h2>Dikkat gerektiren</h2><span class="muted mono">' + pAtt.length + '</span></div>' +
+    attentionTable(pAtt, false) + '</div></section>';
 
-  h += '<div class="grid2"><div class="panel"><div class="panel-head"><h2>Dikkat gerektiren işler</h2>' +
-    '<span class="muted mono">' + att.length + '/' + (late.length + soon.length) + '</span></div>';
-  if (!att.length) {
-    h += '<div class="empty"><h3>Geciken iş yok</h3><p>Tüm açık iş emirleri terminin gerisinde değil.</p></div>';
-  } else {
-    h += '<div class="tw"><table><thead><tr><th>İş</th><th>Proje</th><th>Sorumlu</th><th>Termin</th><th>Durum</th></tr></thead><tbody>';
-    att.forEach(function (t) {
-      const p = byId(data.projects, t.projectId), st = taskState(t), d = daysBetween(t.dueDate);
-      h += '<tr class="click" data-open-proj="' + esc(t.projectId) + '">' +
-        '<td class="t-name">' + esc(t.name) + '</td>' +
-        '<td class="muted">' + esc(p ? p.name : "—") + '</td>' +
-        '<td>' + esc(personName(t.assignee) || "Atanmadı") + '</td>' +
-        '<td class="mono">' + fmtDate(t.dueDate) + '<span class="muted"> (' +
-          (d < 0 ? Math.abs(d) + " gün geç" : d + " gün") + ')</span></td>' +
-        '<td><span class="st st-' + st + '">' + esc(stateLabel(st)) + '</span></td></tr>';
-    });
-    h += '</tbody></table></div>';
-  }
+  h += '<section class="side" aria-label="Proje dışı işler"><div class="side-head"><h2>Proje dışı işler</h2>' +
+    '<span class="muted">' + J.all.length + ' iş emri</span>' +
+    '<button class="btn btn-sm btn-ghost" data-nav="projedisi">Proje dışı işler →</button></div>' +
+    '<div class="kpis">' +
+    kpi(J.open.length, "Açık iş", J.done + " / " + J.all.length + " bitti", "") +
+    kpi(J.late.length, "Geciken", J.late.length ? "Termini geçti" : "Gecikme yok", J.late.length ? "alert" : "") +
+    kpi(J.soon.length, "7 gün içinde", "Termini yaklaşan", J.soon.length ? "warn" : "") +
+    kpi(J.urgent.length, "Acil", J.urgent.length ? "Acil işaretli açık iş" : "Acil iş yok", J.urgent.length ? "alert" : "") + '</div>' +
+    '<div class="panel"><div class="panel-head"><h2>Dikkat gerektiren</h2><span class="muted mono">' + jAtt.length + '</span></div>' +
+    attentionTable(jAtt, true) + '</div></section>';
+
   h += '</div>';
 
   const load = data.depts.map(function (d) {
-    const o = open.filter(function (t) { return t.dept === d.id; });
-    const l = o.filter(function (t) { const x = daysBetween(t.dueDate); return x !== null && x < 0; }).length;
-    return { name: d.name, open: o.length, late: l };
-  }).sort(function (a, b) { return b.open - a.open; });
-  const max = Math.max.apply(null, [1].concat(load.map(function (x) { return x.open; })));
+    const p = P.open.filter(function (t) { return t.dept === d.id; });
+    const j = J.open.filter(function (t) { return t.dept === d.id; });
+    const late = p.concat(j).filter(function (t) { const x = daysBetween(t.dueDate); return x !== null && x < 0; }).length;
+    return { name: d.name, p: p.length, j: j.length, late: late };
+  }).sort(function (a, b) { return (b.p + b.j) - (a.p + a.j); });
+  const max = Math.max.apply(null, [1].concat(load.map(function (x) { return x.p + x.j; })));
 
-  h += '<div class="panel"><div class="panel-head"><h2>Departman yükü</h2>' +
-    '<span class="muted" style="font-size:12px">açık iş emri</span></div><div class="panel-body">';
-  load.forEach(function (x) {
-    h += '<div class="bar-row"><div style="font-size:12.5px">' + esc(x.name) + '</div>' +
-      '<div class="bar-track"><div class="bar-fill' + (x.late ? " is-late" : "") + '" style="width:' +
-      Math.round(x.open / max * 100) + '%"></div></div><div class="bar-val">' + x.open + '</div></div>';
-  });
-  h += '<div class="legend" style="margin-top:10px"><span class="li"><span class="dot dot-devam"></span>açık</span>' +
-    '<span class="li"><span class="dot dot-gecikti"></span>gecikmiş iş içeriyor</span></div></div></div></div>';
-
-  h += '<div class="panel"><div class="panel-head"><h2>Proje ilerlemesi</h2>' +
+  h += '<div class="grid2"><div class="panel"><div class="panel-head"><h2>Proje ilerlemesi</h2>' +
     '<button class="btn btn-sm btn-ghost" data-nav="projeler">Tümü →</button></div><div class="tw"><table>' +
     '<thead><tr><th>Proje</th><th>Tema</th><th>Teslim</th><th>İlerleme</th><th>Açık iş</th></tr></thead><tbody>';
   active.slice().sort(function (a, b) {
@@ -257,7 +307,98 @@ export function viewPanel(S) {
   if (!active.length)
     h += '<tr><td colspan="5"><div class="empty"><h3>Aktif proje yok</h3><p>Yeni proje açarak başlayın.</p></div></td></tr>';
   h += '</tbody></table></div></div>';
+
+  h += '<div class="panel"><div class="panel-head"><h2>Departman yükü</h2>' +
+    '<span class="muted" style="font-size:12px">açık iş emri</span></div><div class="panel-body">';
+  load.forEach(function (x) {
+    h += '<div class="bar-row bar-row-load"><div style="font-size:12.5px">' + esc(x.name) + '</div>' +
+      '<div class="bar-track bar-stack" title="' + esc(x.p + " proje işi, " + x.j + " proje dışı iş") + '">' +
+      '<div class="bar-fill" style="width:' + Math.round(x.p / max * 100) + '%"></div>' +
+      '<div class="bar-fill is-job" style="width:' + Math.round(x.j / max * 100) + '%"></div></div>' +
+      '<div class="bar-val">' + (x.p + x.j) + '</div>' +
+      '<div>' + (x.late ? '<span class="bar-late">' + x.late + ' geç</span>' : '') + '</div></div>';
+  });
+  h += '<div class="legend" style="margin-top:10px"><span class="li"><span class="dot dot-devam"></span>proje işi</span>' +
+    '<span class="li"><span class="dot dot-job"></span>proje dışı iş</span>' +
+    '<span class="li"><span class="bar-late">geç</span>termini geçmiş iş</span></div></div></div></div>';
   return h;
+}
+
+/* ================= proje dışı işler ================= */
+
+const JOB_FILTERS = [
+  { id: "acik", label: "Açık" }, { id: "gecikti", label: "Geciken" }, { id: "acil", label: "Acil" },
+  { id: "tamam", label: "Tamamlanan" }, { id: "tumu", label: "Tümü" }
+];
+
+function jobPass(t, f) {
+  const done = t.status === "tamam";
+  if (f === "acik") return !done;
+  if (f === "gecikti") { const d = daysBetween(t.dueDate); return !done && d !== null && d < 0; }
+  if (f === "acil") return !done && !!t.urgent;
+  if (f === "tamam") return done;
+  return true;
+}
+
+export function viewJobs(S) {
+  const plan = canPlan();
+  const all = jobs();
+  const st = workStats(all);
+  const f = S.jobFilter || "acik";
+
+  let h = '<div class="page-head"><div><h1>Proje dışı işler</h1>' +
+    '<div class="sub">Projeye bağlı olmayan iş emirleri — bakım, tamir, numune, iç işler</div></div>' +
+    (plan ? '<button class="btn btn-pri" data-newjob="1">Yeni iş emri</button>' : '') + '</div>';
+
+  h += '<div class="kpis">' +
+    kpi(st.open.length, "Açık iş", st.done + " / " + all.length + " bitti", "") +
+    kpi(st.late.length, "Geciken", st.late.length ? "Termini geçti" : "Gecikme yok", st.late.length ? "alert" : "") +
+    kpi(st.soon.length, "7 gün içinde", "Termini yaklaşan", st.soon.length ? "warn" : "") +
+    kpi(st.urgent.length, "Acil", "Acil işaretli açık iş", st.urgent.length ? "alert" : "") + '</div>';
+
+  if (!all.length) {
+    return h + '<div class="panel"><div class="empty"><h3>Henüz proje dışı iş emri yok</h3>' +
+      '<p>' + (plan ? "“Yeni iş emri” ile bir departmana ya da kişiye iş açın." : "Size ya da departmanınıza açılan işler burada görünür.") + '</p>' +
+      (plan ? '<button class="btn btn-pri" data-newjob="1" style="margin-top:10px">Yeni iş emri</button>' : '') + '</div></div>';
+  }
+
+  const term = String(S.jobSearch || "").toLocaleLowerCase("tr-TR").trim();
+  const rows = all.filter(function (t) { return jobPass(t, f); })
+    .filter(function (t) { return !S.jobDept || t.dept === S.jobDept; })
+    .filter(function (t) {
+      if (!term) return true;
+      return [t.name, t.spec, personName(t.assignee), deptName(t.dept)].join(" ").toLocaleLowerCase("tr-TR").indexOf(term) !== -1;
+    });
+
+  h += '<div class="panel"><div class="panel-head job-head"><div class="seg" role="group" aria-label="Durum süzgeci">' +
+    JOB_FILTERS.map(function (x) {
+      const n = all.filter(function (t) { return jobPass(t, x.id); }).length;
+      return '<button class="' + (f === x.id ? "on" : "") + '" data-jobfilter="' + x.id + '">' + esc(x.label) +
+        ' <span class="mono">' + n + '</span></button>';
+    }).join("") + '</div><div class="row-actions">' +
+    '<select id="job-dept" class="inp-sm" style="width:160px" aria-label="Departman süzgeci"><option value="">Tüm departmanlar</option>' +
+    data.depts.map(function (d) {
+      return '<option value="' + esc(d.id) + '"' + (S.jobDept === d.id ? " selected" : "") + '>' + esc(d.name) + '</option>';
+    }).join("") + '</select>' +
+    '<input id="job-search" class="inp-sm" type="search" style="width:200px" placeholder="İş, kişi, açıklama…" value="' +
+    esc(S.jobSearch || "") + '" aria-label="İşlerde ara" autocomplete="off"></div></div>';
+
+  if (!rows.length) return h + '<div class="empty"><h3>Bu görünümde iş yok</h3><p>Süzgeci ya da aramayı değiştirin.</p></div></div>';
+
+  h += '<div class="thead-row"><span class="c-name">İş</span><span>Gereken / Yapılan</span>' +
+    '<span>Departman</span><span>Sorumlu</span><span>Termin</span><span>Durum</span></div>';
+  const order = f === "tamam"
+    ? function (a, b) { return String(b.completedAt || "").localeCompare(String(a.completedAt || "")); }
+    : function (a, b) { return (a.status === "tamam") - (b.status === "tamam") || attentionOrder(a, b); };
+  data.depts.concat([{ id: "", name: "Departman atanmamış" }]).forEach(function (d) {
+    const items = rows.filter(function (t) {
+      return d.id ? t.dept === d.id : !byId(data.depts, t.dept);
+    }).sort(order);
+    if (!items.length) return;
+    h += '<div class="gband"><span>' + esc(d.name) + '</span><span class="n">' + items.length + '</span></div>';
+    items.forEach(function (t) { h += taskRow(t); });
+  });
+  return h + '</div>';
 }
 
 /* ================= projeler ================= */
@@ -266,8 +407,9 @@ export function viewProjects(S) {
   const list = S.showArchived ? data.projects.slice() : activeProjects();
   const archCount = data.projects.filter(function (p) { return p.archived; }).length;
 
+  const projTaskCount = data.tasks.filter(function (t) { return !isJob(t); }).length;
   let h = '<div class="page-head"><div><h1>Projeler</h1><div class="sub">' +
-    activeProjects().length + ' aktif · ' + archCount + ' arşivde · ' + data.tasks.length + ' iş emri</div></div>' +
+    activeProjects().length + ' aktif · ' + archCount + ' arşivde · ' + projTaskCount + ' iş emri</div></div>' +
     '<div class="row-actions">' +
     '<button class="btn btn-sm' + (S.projView === "liste" ? " btn-pri" : "") + '" data-projview="liste">Liste</button>' +
     '<button class="btn btn-sm' + (S.projView === "matris" ? " btn-pri" : "") + '" data-projview="matris">Matris</button>' +
@@ -448,8 +590,11 @@ export function viewMyWork(S) {
       if (t.spec) cell += '<div class="tspec">' + esc(t.spec) + '</div>';
       if (!cell) cell = '<span class="muted">—</span>';
       h += '<tr><td class="t-name">' + esc(t.name) +
+        (t.urgent ? ' <span class="tag tag-urgent">Acil</span>' : '') +
         (short > 0 && made > 0 ? ' <span class="tag tag-warn">' + made + '/' + need + ' — ' + short + ' eksik</span>' : '') + '</td>' +
-        '<td class="muted click" data-open-proj="' + esc(t.projectId) + '">' + esc(pj ? pj.name : "—") + '</td>' +
+        (isJob(t)
+          ? '<td><button class="tag tag-job" data-nav="projedisi">Proje dışı</button></td>'
+          : '<td class="muted click" data-open-proj="' + esc(t.projectId) + '">' + esc(pj ? pj.name : "—") + '</td>') +
         '<td>' + cell + '</td>' +
         '<td class="mono">' + fmtDate(t.dueDate) +
           (d !== null ? '<span class="muted"> (' + (d < 0 ? Math.abs(d) + " gün geç" : d + " gün") + ')</span>' : '') + '</td>' +
@@ -469,7 +614,7 @@ export function viewMyWork(S) {
       '<thead><tr><th>Adım</th><th>Proje</th><th>Tamamlandı</th><th></th></tr></thead><tbody>';
     done.forEach(function (t) {
       const pj = byId(data.projects, t.projectId);
-      h += '<tr><td>' + esc(t.name) + '</td><td class="muted">' + esc(pj ? pj.name : "—") + '</td>' +
+      h += '<tr><td>' + esc(t.name) + '</td><td class="muted">' + esc(isJob(t) ? "Proje dışı" : (pj ? pj.name : "—")) + '</td>' +
         '<td class="mono muted">' + fmtDate(String(t.completedAt || "").slice(0, 10)) + '</td>' +
         '<td style="text-align:right"><button class="btn btn-sm btn-ghost" data-toggle="' + esc(t.id) + '">Geri al</button></td></tr>';
     });
@@ -673,7 +818,7 @@ export function viewRequests(S) {
 }
 
 const VIEW_LABEL = {
-  panel: "Panel", projeler: "Projeler", isler: "İşlerim", yeni: "Yeni Proje",
+  panel: "Panel", projeler: "Projeler", projedisi: "Proje Dışı İşler", isler: "İşlerim", yeni: "Yeni Proje",
   teklifler: "Teklifler", talepler: "Talepler", kayitlar: "Kayıtlar", ayarlar: "Ayarlar"
 };
 

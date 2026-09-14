@@ -7,7 +7,7 @@ export const ROLES = {
   yonetici: {
     label: "Yönetici",
     desc: "Her şeyi yönetir, giriş yetkisi verir",
-    views: ["panel", "projeler", "proje", "isler", "yeni", "teklifler", "teklif", "teklif-ayar",
+    views: ["panel", "projeler", "proje", "projedisi", "isler", "yeni", "teklifler", "teklif", "teklif-ayar",
       "talepler", "kayitlar", "ayarlar"],
     scope: "hepsi"
   },
@@ -20,19 +20,19 @@ export const ROLES = {
   planlamaci: {
     label: "Planlamacı",
     desc: "Proje açar, iş emirlerini dağıtır",
-    views: ["panel", "projeler", "proje", "isler", "yeni", "kayitlar"],
+    views: ["panel", "projeler", "proje", "projedisi", "isler", "yeni", "kayitlar"],
     scope: "hepsi"
   },
   sef: {
     label: "Şef",
     desc: "Departmanının işlerini yürütür",
-    views: ["panel", "projeler", "proje", "isler"],
+    views: ["panel", "projeler", "proje", "projedisi", "isler"],
     scope: "departman"
   },
   personel: {
     label: "Personel",
     desc: "Kendine atanan işleri yapar",
-    views: ["projeler", "proje", "isler"],
+    views: ["projeler", "proje", "projedisi", "isler"],
     scope: "kendi"
   }
 };
