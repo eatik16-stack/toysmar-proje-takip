@@ -337,15 +337,22 @@ export function latestQuotes() {
 export function productByName(name) {
   const k = trLower(String(name || "").trim());
   if (!k) return null;
-  for (let i = 0; i < data.products.length; i++) if (trLower(data.products[i].name) === k) return data.products[i];
+  const list = activeProducts();
+  for (let i = 0; i < list.length; i++) if (trLower(list[i].name) === k) return list[i];
   return null;
 }
 
-export function searchProducts(term, max) {
+// Listeden düşen ürünler (active:false) seçicide görünmez; eski tekliflerde kalem olarak durur.
+export function isActive(p) { return !!p && p.active !== false; }
+export function activeProducts() { return data.products.filter(isActive); }
+
+// Kod, ad, ebat ve grupta arar; Türkçe büyük/küçük harf duyarsız. group verilirse o grupla sınırlı.
+export function searchProducts(term, max, group) {
   const words = trLower(term).split(/\s+/).filter(Boolean);
   if (!words.length) return [];
-  return data.products.filter(function (p) {
-    const hay = trLower(p.name + " " + (p.code || "") + " " + (p.group || ""));
+  return activeProducts().filter(function (p) {
+    if (group && (p.group || "") !== group) return false;
+    const hay = trLower([p.name, p.code, p.codeRaw, p.size, p.group].filter(Boolean).join(" "));
     return words.every(function (w) { return hay.indexOf(w) !== -1; });
   }).slice(0, max || 8);
 }
@@ -400,6 +407,153 @@ export function longDate(iso) {
   if (isNaN(d)) return "—";
   try { return d.toLocaleDateString("tr-TR", { day: "numeric", month: "long", year: "numeric" }); }
   catch (e) { return iso; }
+}
+
+/* ---------------- fiyat listesi kaynağı (Google Sheet köprüsü) ----------------
+ *
+ * Fiyatlar "Toysmar Takip - 2026" e-tablosunda tutulur; sayfanın yanındaki Apps Script
+ * köprüsü (fiyat-koprusu.gs) yalnızca kod / ad / ebat / perakende fiyat / grup verir.
+ * Köprü adresi ve anahtarı sales/source belgesinde durur — kurallarda yalnızca yönetici okur.
+ * Katalog tek belgede (sales/catalog) tutulur: içe aktarma tek yazma işlemidir, yarım kalmaz.
+ */
+
+export async function loadSource() {
+  const f = await fb();
+  const s = await f.getDoc(f.doc(f.db, "sales", "source"));
+  return s.exists() ? s.data() : { url: "", key: "" };
+}
+
+export async function saveSource(url, key) {
+  const f = await fb();
+  const body = { url: String(url || "").trim(), key: String(key || "").trim(),
+    updatedAt: new Date().toISOString(), updatedBy: myEmail() };
+  await f.setDoc(f.doc(f.db, "sales", "source"), body);
+  writeLog("fiyat-kaynak", "sales/source", "fiyat listesi kaynağı güncellendi");
+  return body;
+}
+
+function bridgeCheck(body) {
+  if (!body || typeof body !== "object") throw new Error("Köprü beklenmeyen bir yanıt verdi.");
+  if (body.hata) {
+    if (/yetkisiz/i.test(body.hata)) throw new Error("Anahtar hatalı: köprü isteği reddetti. Apps Script'teki ANAHTAR ile buradaki anahtar aynı olmalı.");
+    if (/bulunamad/i.test(body.hata)) throw new Error("Sayfa bulunamadı: " + body.hata);
+    throw new Error("Köprü hata verdi: " + body.hata);
+  }
+  if (!Array.isArray(body.urunler)) throw new Error("Köprü yanıtında ürün listesi yok.");
+  return body;
+}
+
+// GET <url>?key=<anahtar> → { kaynak, listeTarihi, kur, alindi, adet, uyarilar, urunler[] }
+export async function fetchPriceList(url, key) {
+  url = String(url || "").trim();
+  if (!url) throw new Error("Köprü adresi girilmemiş.");
+  if (!key) throw new Error("Köprü anahtarı girilmemiş.");
+  // Testte gerçek ağ yerine sabit yanıt.
+  if (window.__MOCK_PRICE_LIST__) return bridgeCheck(await window.__MOCK_PRICE_LIST__(url, key));
+  let res;
+  try {
+    res = await fetch(url + (url.indexOf("?") >= 0 ? "&" : "?") + "key=" + encodeURIComponent(key),
+      { redirect: "follow", cache: "no-store" });
+  } catch (e) {
+    throw new Error("Bağlantı kurulamadı. Köprü adresini ve internet bağlantısını kontrol edin.");
+  }
+  let body;
+  try { body = await res.json(); }
+  catch (e) {
+    throw new Error("Köprü JSON döndürmedi. Adres, Apps Script web uygulamasının /exec ile biten adresi olmalı ve dağıtım “Herkes” erişimiyle yapılmalı.");
+  }
+  return bridgeCheck(body);
+}
+
+// Köprüden gelen satırları katalog kaydına çevirir. Yinelenen kodlar -2, -3 eki alır
+// ve raporlanır; uygulama sessizce birleştirmez, kalıcı çözüm sayfada.
+export function normalizeIncoming(body, meta) {
+  const seen = {}, out = [], notes = [];
+  (body.urunler || []).forEach(function (u) {
+    const name = String(u.ad || "").trim();
+    if (!name) return;
+    const base = String(u.kod || "").replace(/\s+/g, "").toUpperCase() || ("SATIR-" + (u.satir || out.length + 1));
+    let id = base, n = 2;
+    while (seen[id]) id = base + "-" + (n++);
+    if (id !== base) notes.push("Yinelenen kod " + base + " → " + id + " (satır " + (u.satir || "?") + ": " + name + ")");
+    seen[id] = true;
+    const price = Math.round((Number(u.fiyat) || 0) * 100) / 100;
+    out.push({
+      id: id, code: id, codeRaw: String(u.kodHam || u.kod || "").trim(),
+      name: name, size: String(u.ebat || "").trim(), group: String(u.grup || "").trim(),
+      price: price, priceMissing: !(price > 0), unit: "Adet", note: "",
+      active: true, source: "sheet", row: u.satir || 0,
+      listDate: body.listeTarihi || "", importedAt: meta.importedAt, importedBy: meta.importedBy
+    });
+  });
+  return { products: out, notes: notes };
+}
+
+function pct(a, b) { return a > 0 ? Math.round((b - a) / a * 1000) / 10 : null; }
+
+// Mevcut katalog ile gelen listeyi kod üzerinden karşılaştırır. Elle eklenen ürünler
+// (source ≠ "sheet") dokunulmadan kalır; listeden düşenler silinmez, pasife alınır.
+export function diffCatalog(current, body, meta) {
+  const norm = normalizeIncoming(body, meta);
+  const manual = current.filter(function (p) { return p.source !== "sheet"; });
+  const cur = {};
+  current.forEach(function (p) { if (p.source === "sheet") cur[p.id] = p; });
+
+  const plan = {
+    added: [], priceChanged: [], textChanged: [], dropped: [], reactivated: [],
+    warnings: (body.uyarilar || []).concat(norm.notes),
+    sheetCount: norm.products.length, manualCount: manual.length,
+    source: body.kaynak || "", listDate: body.listeTarihi || "", rate: body.kur || null,
+    fetchedAt: body.alindi || "", next: null, hasChanges: false
+  };
+
+  const next = manual.slice();
+  const incomingIds = {};
+  norm.products.forEach(function (p) {
+    incomingIds[p.id] = true;
+    const old = cur[p.id];
+    if (!old) { plan.added.push(p); next.push(p); return; }
+    if (old.active === false) plan.reactivated.push(p);
+    if (Math.round((Number(old.price) || 0) * 100) !== Math.round(p.price * 100)) {
+      plan.priceChanged.push({ id: p.id, name: p.name, oldPrice: Number(old.price) || 0, newPrice: p.price, pct: pct(Number(old.price) || 0, p.price) });
+    }
+    if ((old.name || "") !== p.name || (old.size || "") !== p.size || (old.group || "") !== p.group) {
+      plan.textChanged.push({ id: p.id, oldName: old.name || "", newName: p.name, oldSize: old.size || "", newSize: p.size, oldGroup: old.group || "", newGroup: p.group });
+    }
+    // Kullanıcının katalogda değiştirdiği birim korunur.
+    next.push(Object.assign({}, p, { unit: old.unit || p.unit }));
+  });
+  Object.keys(cur).forEach(function (id) {
+    if (incomingIds[id]) return;
+    const old = cur[id];
+    if (old.active !== false) plan.dropped.push(old);
+    next.push(Object.assign({}, old, { active: false }));
+  });
+
+  plan.next = next;
+  plan.hasChanges = !!(plan.added.length || plan.priceChanged.length || plan.textChanged.length || plan.dropped.length || plan.reactivated.length);
+  return plan;
+}
+
+export async function applyImport(plan) {
+  const f = await fb();
+  const now = new Date().toISOString();
+  const summary = plan.sheetCount + " ürün, " + plan.priceChanged.length + " fiyat değişti, " +
+    plan.added.length + " yeni, " + plan.dropped.length + " pasif";
+  const body = {
+    products: plan.next, updatedAt: now,
+    lastImport: {
+      at: now, by: myEmail(), byName: myName(), source: plan.source, listDate: plan.listDate,
+      fetchedAt: plan.fetchedAt, count: plan.sheetCount, added: plan.added.length,
+      priceChanged: plan.priceChanged.length, dropped: plan.dropped.length, warnings: plan.warnings.length
+    }
+  };
+  // Firestore belge sınırı 1 MB; katalog tek belgede tutulduğu için önceden ölçülür.
+  if (JSON.stringify(body).length > 900000) throw new Error("Katalog tek belge sınırını aşıyor (" + plan.sheetCount + " ürün). Listeyi bölmeden içe aktarılamaz.");
+  await f.setDoc(f.doc(f.db, "sales", "catalog"), body);
+  writeLog("fiyat-listesi", "sales/catalog", "Fiyat listesi güncellendi — " + summary +
+    (plan.listDate ? " · liste tarihi " + plan.listDate : ""));
+  return summary;
 }
 
 export function fillTokens(text, q) {

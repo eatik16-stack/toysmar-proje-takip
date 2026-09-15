@@ -15,6 +15,7 @@ export const data = {
   quotes: [],                     // quotes/*   (yalnızca satış rollerinde)
   sales: null,                    // sales/settings
   products: [],                   // sales/catalog
+  catalogMeta: null,              // sales/catalog.lastImport
   loaded: { catalog: false, org: false, members: false, projects: false, tasks: false,
             quotes: false, sales: false, products: false }
 };
@@ -93,6 +94,7 @@ export async function subscribeAll(onChange, onError) {
     unsubs.push(f.onSnapshot(f.doc(f.db, "sales", "catalog"), function (s) {
       const d = (s.exists() && s.data()) || {};
       data.products = Array.isArray(d.products) ? d.products.slice() : [];
+      data.catalogMeta = d.lastImport || null;   // son fiyat listesi içe aktarımı
       data.loaded.products = true; onChange();
     }, fail("ürün kataloğu")));
   } else {
