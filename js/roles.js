@@ -23,22 +23,32 @@ export const ROLES = {
     views: ["panel", "projeler", "proje", "projedisi", "isler", "yeni", "kayitlar"],
     scope: "hepsi"
   },
+  muhasebe: {
+    label: "Muhasebe",
+    desc: "Tüm projeleri izler; muhasebe bilgilerini ve Muhasebe iş emirlerini yürütür",
+    views: ["panel", "projeler", "proje", "projedisi", "isler"],
+    scope: "departman"
+  },
   sef: {
     label: "Şef",
-    desc: "Departmanının işlerini yürütür",
+    desc: "Departmanının tüm bölümlerini görür ve yürütür",
     views: ["panel", "projeler", "proje", "projedisi", "isler"],
     scope: "departman"
   },
   personel: {
     label: "Personel",
-    desc: "Kendine atanan işleri yapar",
+    desc: "Bölümünün işlerini görür; kendine ya da bölümüne açılanı yapar",
     views: ["projeler", "proje", "projedisi", "isler"],
-    scope: "kendi"
+    scope: "bolum"
   }
 };
 
 // Yetkiden yetkisize doğru — yönetici ekranındaki sıralama budur.
-export const ROLE_ORDER = ["yonetici", "planlamaci", "satis", "sef", "personel"];
+export const ROLE_ORDER = ["yonetici", "planlamaci", "muhasebe", "satis", "sef", "personel"];
+
+// Tüm projeleri ve iş emirlerini gören roller (karar 6). Şef yalnızca
+// departmanını, personel yalnızca bölümünü görür; sınır firestore.rules'ta da var.
+export const SEE_ALL_ROLES = ["yonetici", "planlamaci", "muhasebe", "satis"];
 
 export const DEFAULT_ROLE = "personel";
 

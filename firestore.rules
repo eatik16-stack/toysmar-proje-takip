@@ -4,7 +4,12 @@ rules_version = '2';
 // Kimin gireceği kurallarda değil, "allowed" koleksiyonunda tutulur.
 // Kurallar yalnızca yeni bir modül ya da rol eklendiğinde yeniden yayınlanır.
 // Roller js/roles.js dosyasındakilerle birebir aynı olmalı:
-// yonetici, planlamaci, satis, sef, personel.
+// yonetici, planlamaci, muhasebe, satis, sef, personel.
+//
+// Görünürlük (karar 6): yönetici, planlamacı, muhasebe ve satış her iş emrini
+// okur; şef yalnızca departmanının, personel yalnızca bölümünün (bölümü yoksa
+// departmanının) iş emirlerini. Herkes kendi açtığı ve kendine atanan işi okur.
+// Uygulama bu kapsamda sorgular; kapsam dışı bir sorgu burada reddedilir.
 
 service cloud.firestore {
   match /databases/{database}/documents {
@@ -27,6 +32,7 @@ service cloud.firestore {
     function myRole()      { return me().get('role', 'personel'); }
     function myPersonId()  { return me().get('personId', ''); }
     function myDept()      { return me().get('dept', ''); }
+    function mySection()   { return me().get('section', ''); }
 
     function hasRole(roles) { return isAllowed() && myRole() in roles; }
 
@@ -35,6 +41,23 @@ service cloud.firestore {
     function canPlan()  { return hasRole(['yonetici', 'planlamaci']); }
     // Teklif hazırlayan ve fiyat gören roller.
     function canSell()  { return hasRole(['yonetici', 'satis']); }
+    // Muhasebe bilgilerini okuyan ve yazan roller.
+    function canAccount() { return hasRole(['yonetici', 'muhasebe']); }
+    // Tüm iş emirlerini ve dosyaları gören roller.
+    function seesAll()  { return hasRole(['yonetici', 'planlamaci', 'muhasebe', 'satis']); }
+
+    // İş emri / dosya kişinin kapsamında mı: şef departmanının tamamı,
+    // personel bölümü (bölümü yoksa departmanı) ve bölümsüz kayıtlar.
+    function inMyScope(d) {
+      return isAllowed() && myDept() != '' && d.get('dept', '') == myDept()
+          && (myRole() == 'sef' || mySection() == '' || d.get('section', '') in ['', mySection()]);
+    }
+    // Kendi açtığı ya da kendine atanmış iş emri.
+    function mineTask(d) {
+      return isAllowed()
+          && (d.get('openedBy', '') == email()
+              || (myPersonId() != '' && d.get('assignee', '') == myPersonId()));
+    }
 
     // --- kimler girebilir --------------------------------------------
     // Herkes listeyi okuyabilir (ekranlarda isim göstermek için),
@@ -68,6 +91,8 @@ service cloud.firestore {
     }
 
     // --- projeler ------------------------------------------------------
+    // Proje kartında gizli bilgi yok (muhasebe ayrı koleksiyonda); şef ve
+    // personelin listesi uygulamada kapsamındaki iş emirlerine göre daralır.
     // Silme yalnızca yöneticide; uygulama normalde arşivler, silmez.
     match /projects/{doc} {
       allow read:           if isAllowed();
@@ -75,18 +100,44 @@ service cloud.firestore {
       allow delete:         if isAdmin();
     }
 
+    // --- proje muhasebe bilgileri ---------------------------------------
+    // Tutar, ödeme, borç-alacak: yalnızca yönetici ve muhasebe.
+    match /accounting/{doc} {
+      allow read, write: if canAccount();
+    }
+
     // --- iş emirleri ----------------------------------------------------
-    // Planlayan roller hepsine dokunur; şef kendi departmanının işlerine,
-    // personel yalnızca kendisine atanmış işe.
+    // Okuma: görünürlük kapsamı (yukarıda). Açma: planlayan roller her türlü
+    // iş emrini; diğer herkes yalnızca proje dışı iş emrini, kendi adına.
+    // Kapatma/güncelleme: planlayan roller hepsini; şef ve muhasebe kendi
+    // departmanınınkini; kişiye atanmış işi o kişi; bölümüne açık, kişiye
+    // atanmamış işi personel. Başka departmana iş açan kişi kapatamaz.
     match /tasks/{doc} {
-      allow read:   if isAllowed();
-      allow create: if canPlan();
+      allow read:   if seesAll() || inMyScope(resource.data) || mineTask(resource.data);
+      allow create: if canPlan()
+                    || (isAllowed()
+                        && request.resource.data.get('projectId', '') == ''
+                        && request.resource.data.get('openedBy', '') == email());
       allow update: if canPlan()
+                    || (hasRole(['sef', 'muhasebe']) && myDept() != ''
+                        && resource.data.get('dept', '') == myDept())
                     || (isAllowed() && myPersonId() != ''
                         && resource.data.get('assignee', '') == myPersonId())
-                    || (hasRole(['sef']) && myDept() != ''
-                        && resource.data.get('dept', '') == myDept());
+                    || (hasRole(['personel']) && inMyScope(resource.data)
+                        && resource.data.get('assignee', '') == '');
       allow delete: if isAdmin();
+    }
+
+    // --- iş emri dosyaları ---------------------------------------------
+    // Dosya kaydı iş emrinin departman/bölümünü taşır; görünürlük aynı.
+    // Dosya silinmez, yalnızca arşive alınır (archived alanı).
+    match /files/{doc} {
+      allow read:   if seesAll() || inMyScope(resource.data)
+                    || (isAllowed() && resource.data.get('uploadedBy', '') == email());
+      allow create: if isAllowed() && request.resource.data.get('uploadedBy', '') == email();
+      allow update: if (canPlan() || (isAllowed() && resource.data.get('uploadedBy', '') == email()))
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['archived']);
+      allow delete: if false;
     }
 
     // --- teklifler ------------------------------------------------------

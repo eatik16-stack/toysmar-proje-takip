@@ -7,7 +7,7 @@
 
 import { fb } from "./fb.js";
 import { lsGet, lsSet } from "./util.js";
-import { DEFAULT_ROLE, PLANNER_ROLES, SALES_ROLES, ACCOUNT_ROLES, roleSees } from "./roles.js";
+import { DEFAULT_ROLE, PLANNER_ROLES, SALES_ROLES, ACCOUNT_ROLES, SEE_ALL_ROLES, roleSees } from "./roles.js";
 
 // Doğrulanmamış hesap Firestore'a yazamaz (kurallar email_verified istiyor),
 // bu yüzden talep bilgisi doğrulama tamamlanana kadar tarayıcıda bekler.
@@ -46,6 +46,16 @@ export function canSell() {
 export function canAccount() {
   return !!session.member && ACCOUNT_ROLES.indexOf(myRole()) !== -1;
 }
+
+// Tüm iş emirlerini gören roller; şef ve personel yalnızca kapsamını görür.
+export function seesAll() {
+  return !!session.member && SEE_ALL_ROLES.indexOf(myRole()) !== -1;
+}
+
+// Giriş yetkisi kaydındaki departman, bölüm ve personel kimliği.
+export function myDept()     { return (session.member && session.member.dept) || ""; }
+export function mySection()  { return (session.member && session.member.section) || ""; }
+export function myPersonId() { return (session.member && session.member.personId) || ""; }
 
 export function canSee(view) {
   return !!session.member && roleSees(myRole(), view);
