@@ -15,6 +15,7 @@ export const data = {
   members: [],                    // allowed/*  (giriş yetkisi olanlar)
   requests: [],                   // requests/* (bekleyen erişim talepleri)
   projects: [], tasks: [],
+  files: [],                      // files/*    (iş emrine bağlı dosya kayıtları)
   accounting: {},                 // accounting/<projectId> (yalnızca yönetici ve muhasebe)
   quotes: [],                     // quotes/*   (yalnızca satış rollerinde)
   sales: null,                    // sales/settings
@@ -86,6 +87,11 @@ export async function subscribeAll(onChange, onError) {
     data.tasks = rowsOf(s);
     data.loaded.tasks = true; onChange();
   }, fail("iş emirleri")));
+
+  unsubs.push(f.onSnapshot(f.collection(f.db, "files"), function (s) {
+    data.files = rowsOf(s);
+    onChange();
+  }, fail("dosyalar")));
 
   // Muhasebe bilgileri proje belgesinde değil, ayrı koleksiyonda: diğer roller okuyamaz.
   if (canAccount()) {
