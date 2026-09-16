@@ -21,8 +21,10 @@ export function init(ctx) {
   Object.assign(S, {
     q: null, qKey: "", qDirty: false, qSaving: false, qSaveError: "", qTimer: null, qRev: 0,
     qRemote: null, qBase: "", qPreview: false, qImg: {}, qPendingImage: null, qLogged: false,
-    qAdd: "", qAddActive: 0, qFilter: "acik", qSearch: "", qRebuild: false,
-    salesDraft: null, salesDirty: false, pSearch: ""
+    qAdd: "", qAddActive: 0, qAddGroup: "", qFilter: "acik", qSearch: "", qRebuild: false,
+    salesDraft: null, salesDirty: false, pSearch: "", pShowInactive: false,
+    // fiyat listesi kaynağı (yalnızca yönetici yükler) ve bekleyen içe aktarma planı
+    source: null, sourceDirty: false, importing: false, importPlan: null
   });
   window.addEventListener("beforeunload", function (e) {
     if (S.qDirty || S.salesDirty) { e.preventDefault(); e.returnValue = ""; }
@@ -244,13 +246,20 @@ function lineIndex(id) {
   return -1;
 }
 
+// Katalogdan kalem: liste fiyatı kaleme KOPYALANIR (katalog sonra değişse de kalem değişmez),
+// ebat açıklamaya düşer. Fiyatı olmayan ürünle döviz tekliflerinde fiyat elle girilir.
 function addProductLine(p) {
-  const s = S(), l = Q.newLine("item", p);
-  s.q.items.push(l);
+  const s = S(), q = s.q, l = Q.newLine("item", p);
+  if (p.size && !l.note) l.note = p.size;
+  const tl = (q.currency || "TRY") === "TRY";
+  if (p.price > 0 && !p.priceMissing && tl) l.price = p.price;
+  q.items.push(l);
   s.qAdd = ""; s.qAddActive = 0;
-  s.focusNext = "ql-" + l.id + "-qty";
+  s.focusNext = "ql-" + l.id + (l.price === null ? "-price" : "-qty");
   touch(true);
-  toast("“" + l.name + "” eklendi — miktar ve fiyatı girin.");
+  if (p.priceMissing) toast("“" + l.name + "” listede fiyatsız — fiyatı elle girin.");
+  else if (!tl && p.price > 0) toast("“" + l.name + "” eklendi. Liste fiyatı TL; döviz teklifinde fiyatı elle girin.");
+  else toast("“" + l.name + "” eklendi" + (l.price !== null ? " — liste fiyatı " + fmtMoney(l.price, "TRY") : "") + ".");
 }
 
 function addFreeLine(name) {
@@ -265,6 +274,47 @@ function addFreeLine(name) {
 function applyProductToLine(l, p) {
   l.productId = p.id; l.code = p.code || ""; l.name = p.name;
   if (p.unit) l.unit = p.unit;
+  if (p.size && !l.note) l.note = p.size;
+}
+
+/* ==================== fiyat listesi içe aktarma ==================== */
+
+async function runImport() {
+  const s = S();
+  if (!s.source) return;
+  if (s.sourceDirty) {
+    const saved = await C.guard(Q.saveSource(s.source.url, s.source.key));
+    if (!saved) return;
+    s.source = saved; s.sourceDirty = false;
+  }
+  s.importing = true; C.render();
+  try {
+    const body = await Q.fetchPriceList(s.source.url, s.source.key);
+    const plan = Q.diffCatalog(data.products, body, { importedAt: new Date().toISOString(), importedBy: myEmail() });
+    s.importing = false;
+    if (!plan.hasChanges) {
+      toast("Katalog güncel: " + plan.sheetCount + " ürün, değişiklik yok." +
+        (plan.warnings.length ? " Sayfada " + plan.warnings.length + " veri uyarısı var." : ""));
+      C.render();
+      return;
+    }
+    s.importPlan = plan;
+    s.modal = { kind: "import" };
+    C.render();
+  } catch (e) {
+    s.importing = false;
+    C.render();
+    toast((e && e.message) || "Fiyat listesi alınamadı.", "error");
+  }
+}
+
+// Özet penceresindeki "Kataloğu güncelle" düğmesi (app.js saveModal → buraya).
+export async function confirmImport() {
+  const s = S(), plan = s.importPlan;
+  if (!plan) return;
+  const summary = await C.guard(Q.applyImport(plan));
+  s.importPlan = null;
+  if (summary) toast("Fiyat listesi güncellendi: " + summary + ".");
 }
 
 /* ==================== yazdırma ==================== */
@@ -418,12 +468,21 @@ export async function onClick(e) {
     s.salesDirty = true; C.render(); return true;
   }
   if (e.target.closest("[data-sstampdel]")) { s.salesDraft.stamp = ""; s.salesDirty = true; C.render(); return true; }
+  if (e.target.closest("[data-srcsave]")) {
+    if (!s.source) return true;
+    const saved = await C.guard(Q.saveSource(s.source.url, s.source.key));
+    if (saved) { s.source = saved; s.sourceDirty = false; toast("Fiyat listesi kaynağı kaydedildi."); C.render(); }
+    return true;
+  }
+  if (e.target.closest("[data-srcimport]")) { await runImport(); return true; }
+  if (e.target.closest("[data-pinactive]")) { s.pShowInactive = !s.pShowInactive; C.render(); return true; }
   if (e.target.closest("[data-padd]")) {
     const v = function (id) { const x = document.getElementById(id); return x ? x.value.trim() : ""; };
     const name = v("pn-name");
     if (!name) { toast("Ürün adı gerekli."); return true; }
     if (Q.productByName(name)) { toast("“" + name + "” katalogda zaten var."); return true; }
-    const p = { id: uid(), code: v("pn-code"), name: name, unit: v("pn-unit") || "Adet", group: v("pn-group"), note: "" };
+    const p = { id: uid(), code: v("pn-code"), name: name, unit: v("pn-unit") || "Adet", group: v("pn-group"), note: "",
+      size: "", price: 0, priceMissing: true, active: true, source: "manuel" };
     await C.guard(Q.saveProducts(data.products.concat([p]), "kataloğa eklendi: " + name));
     s.focusNext = "pn-name";
     toast("“" + name + "” kataloğa eklendi.");
@@ -483,6 +542,18 @@ export async function onClick(e) {
   if ((el = e.target.closest("[data-qaddprod]"))) {
     const p = byId(data.products, el.getAttribute("data-qaddprod"));
     if (p) addProductLine(p);
+    return true;
+  }
+  if ((el = e.target.closest("[data-qaddgroup]"))) {
+    s.qAddGroup = el.getAttribute("data-qaddgroup"); s.qAddActive = 0;
+    setHtml("q-add-results", QV.addResultsHtml(s));
+    const add = document.getElementById("q-add"); if (add) add.focus();
+    return true;
+  }
+  if (e.target.closest("[data-qaddgroupclear]")) {
+    s.qAddGroup = ""; s.qAddActive = 0;
+    setHtml("q-add-results", QV.addResultsHtml(s));
+    const add = document.getElementById("q-add"); if (add) add.focus();
     return true;
   }
   if (e.target.closest("[data-qaddfree]")) { addFreeLine(s.qAdd.trim()); return true; }
@@ -558,6 +629,12 @@ export function onInput(e) {
   if (t.id === "q-search") { s.qSearch = t.value; C.render(); return true; }
   if (t.id === "p-search") { s.pSearch = t.value; C.render(); return true; }
 
+  if (t.hasAttribute("data-src")) {
+    if (!s.source) return true;
+    s.source[t.getAttribute("data-src")] = t.value;
+    if (!s.sourceDirty) { s.sourceDirty = true; const b = document.querySelector("[data-srcsave]"); if (b) b.disabled = false; }
+    return true;
+  }
   if (t.hasAttribute("data-sf")) {
     s.salesDraft[t.getAttribute("data-sf")] = t.value;
     markSalesDirty(); return true;
@@ -750,7 +827,14 @@ export function onKeydown(e) {
       if (pick) pick.click();
       return true;
     }
-    if (e.key === "Escape") { s.qAdd = ""; t.value = ""; setHtml("q-add-results", ""); return true; }
+    if (e.key === "Escape") {
+      // Önce arama, sonra grup temizlenir; ikisi de boşsa grup listesine dönülür.
+      if (s.qAdd) { s.qAdd = ""; t.value = ""; }
+      else s.qAddGroup = "";
+      s.qAddActive = 0;
+      setHtml("q-add-results", QV.addResultsHtml(s));
+      return true;
+    }
   }
   // Son kalemin fiyatında Enter: yeni ürün eklemeye geç.
   if (e.key === "Enter" && t && t.getAttribute && t.getAttribute("data-lf") === "price") {
@@ -779,5 +863,16 @@ export function ensureSalesDraft() {
   if (!s.salesDraft && data.sales) {
     s.salesDraft = Q.clone(Q.settings());
     s.salesDirty = false;
+  }
+  // Köprü adresi ve anahtarı ayrı, yalnızca yöneticinin okuyabildiği belgede; ekran açılınca çekilir.
+  if (!s.source && !s.sourceLoading && data.sales && isAdmin()) {
+    s.sourceLoading = true;
+    Q.loadSource().then(function (src) {
+      s.source = src; s.sourceDirty = false; s.sourceLoading = false;
+      if (s.view === "teklif-ayar") C.render();
+    }).catch(function (e) {
+      s.sourceLoading = false;
+      toast("Fiyat listesi kaynağı okunamadı: " + ((e && e.message) || ""), "error");
+    });
   }
 }

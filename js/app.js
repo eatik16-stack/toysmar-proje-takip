@@ -579,6 +579,10 @@ function renderModal() {
       'E-posta yazıp rol seçerseniz kişi şifresiyle ya da Google hesabıyla girebilir. ' +
       'Rol, gireceği ekranları belirler. “Giremez” seçilirse kayıt kalır ama giriş yapamaz.</p></div>';
   }
+  else if (m.kind === "import") {
+    title = "Fiyat listesi güncellemesi"; save = "Kataloğu güncelle";
+    body = QV.importSummaryHtml(S);
+  }
   else if (m.kind === "job") {
     const t = m.id ? byId(data.tasks, m.id) : null;
     if (t) {
@@ -657,7 +661,10 @@ async function saveModal() {
   const val = function (k) { const e = host.querySelector('[data-m="' + k + '"]'); return e ? e.value : ""; };
 
   try {
-    if (m.kind === "job") {
+    if (m.kind === "import") {
+      await QA.confirmImport();
+    }
+    else if (m.kind === "job") {
       const name = val("name").trim();
       if (!name) { toast("İşin adını yazın."); return; }
       const urgent = !!(host.querySelector("#m-urgent") || {}).checked;
