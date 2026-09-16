@@ -1,0 +1,32 @@
+rules_version = '2';
+
+// Toysmar Proje Takip — dosya depolama kuralları.
+// Yalnızca "allowed" listesindeki (giriş yetkisi olan, e-postası doğrulanmış)
+// hesaplar okuyup yükleyebilir. Dosya silinmez; uygulama arşive alır.
+// Yol: projeler/{proje}/{isEmri}/{id}-{ad}. Proje dışı iş emirleri "projedisi" altında.
+//
+// Firebase Console → Storage → Rules → yapıştır → Publish.
+// Storage için projenin Blaze planında olması gerekir (5 GB'a kadar ücretsiz).
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function allowed() {
+      return request.auth != null
+          && request.auth.token.email != null
+          && request.auth.token.email_verified == true
+          && firestore.exists(/databases/(default)/documents/allowed/$(request.auth.token.email.lower()));
+    }
+    function okType(name) {
+      return name.lower().matches('.*\\.(jpg|jpeg|png|pdf|dwg|dxf|skp)');
+    }
+
+    match /projeler/{projectId}/{taskId}/{fileName} {
+      allow read:   if allowed();
+      allow create: if allowed()
+                    && okType(fileName)
+                    && request.resource.size < 20 * 1024 * 1024;
+      allow update: if false;
+      allow delete: if false;
+    }
+  }
+}

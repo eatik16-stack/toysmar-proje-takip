@@ -63,3 +63,22 @@ export async function fb() {
   };
   return bundle;
 }
+
+// Firebase Storage yalnızca dosya yüklenirken yüklenir (ilk açılışı ağırlaştırmasın).
+// Storage projede açık değilse (Blaze planı gerekir) yükleme hata verir; uygulama
+// bunu kullanıcıya söyler, başka hiçbir şey etkilenmez.
+let storageBundle = null;
+
+export async function fbStorage() {
+  if (storageBundle) return storageBundle;
+  const b = await fb();
+  if (b.storageApi) { storageBundle = b.storageApi; return storageBundle; }
+  const m = await import(BASE + "firebase-storage.js");
+  const st = m.getStorage(b.app);
+  storageBundle = {
+    ref: function (path) { return m.ref(st, path); },
+    uploadBytes: m.uploadBytes,
+    getDownloadURL: m.getDownloadURL
+  };
+  return storageBundle;
+}
