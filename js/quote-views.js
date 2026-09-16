@@ -10,7 +10,8 @@ import {
 } from "./money.js";
 import {
   STATES, settings, quoteLabel, quoteState, isLocked, latestQuotes, revisionsOf, lastPrice,
-  knownCustomers, units, productGroups, productUsage, longDate, fillTokens, searchProducts, trLower
+  knownCustomers, units, productGroups, productUsage, longDate, fillTokens, searchProducts, trLower,
+  activeProducts, isActive
 } from "./quotes.js";
 
 function kpi(n, label, desc, cls) {
@@ -477,25 +478,122 @@ export function viewQuote(S) {
 
   h += '</aside></div>';
 
-  h += '<datalist id="q-products">' + data.products.map(function (p) { return '<option value="' + esc(p.name) + '"></option>'; }).join("") + '</datalist>';
+  h += '<datalist id="q-products">' + activeProducts().map(function (p) { return '<option value="' + esc(p.name) + '"></option>'; }).join("") + '</datalist>';
   h += '<datalist id="q-customers">' + knownCustomers().map(function (x) { return '<option value="' + esc(x.company) + '"></option>'; }).join("") + '</datalist>';
   return h + '</div>';
 }
 
+function groupOf(p) { return p.group || "Grupsuz"; }
+
+// Ürün seçici: kutu boşken gruplar, grup seçilince o grubun ürünleri, yazınca arama.
+// Klavye: aşağı/yukarı ok .qres satırlarında gezer, Enter ekler (quote-app.js).
 export function addResultsHtml(S) {
   const term = String(S.qAdd || "").trim();
-  if (!term) return "";
-  const list = searchProducts(term, 7);
-  let h = list.map(function (p, i) {
-    const lp = S.q ? lastPrice(p.id, S.q.currency, S.q.id) : null;
-    return '<button class="qres' + (i === (S.qAddActive || 0) ? " on" : "") + '" data-qaddprod="' + esc(p.id) + '">' +
+  const grp = S.qAddGroup || "";
+  const act = activeProducts();
+
+  if (!term && !grp) {
+    const counts = {};
+    act.forEach(function (p) { counts[groupOf(p)] = (counts[groupOf(p)] || 0) + 1; });
+    const keys = Object.keys(counts).sort(function (a, b) { return a.localeCompare(b, "tr"); });
+    if (!keys.length) return "";
+    return '<div class="qgroups">' + keys.map(function (g) {
+      return '<button type="button" class="qgrp" data-qaddgroup="' + esc(g) + '">' + esc(g) +
+        ' <span class="mono">' + counts[g] + '</span></button>';
+    }).join("") + '</div>';
+  }
+
+  const MAX = 60;
+  const list = term
+    ? searchProducts(term, grp ? MAX : 14, grp || "")
+    : act.filter(function (p) { return groupOf(p) === grp; }).slice(0, MAX);
+  const cur = S.q ? S.q.currency : "TRY";
+
+  let h = '';
+  if (grp) h += '<div class="qres-head"><span>' + esc(grp) + '</span>' +
+    '<button type="button" class="linkish" data-qaddgroupclear="1">tüm gruplar</button></div>';
+
+  let prevG = null, idx = 0;
+  list.forEach(function (p) {
+    if (!grp && groupOf(p) !== prevG) { h += '<div class="qres-grp">' + esc(groupOf(p)) + '</div>'; prevG = groupOf(p); }
+    const lp = S.q ? lastPrice(p.id, cur, S.q.id) : null;
+    const meta = [p.code, p.size, p.unit].filter(Boolean).map(esc).join(" · ");
+    h += '<button type="button" class="qres' + (idx === (S.qAddActive || 0) ? " on" : "") + '" data-qaddprod="' + esc(p.id) + '">' +
       '<span class="qres-nm">' + esc(p.name) + '</span>' +
-      '<span class="qres-meta">' + esc([p.code, p.unit, p.group].filter(Boolean).join(" · ")) +
-      (lp ? ' · son fiyat ' + esc(fmtMoney(lp.price, S.q.currency)) : '') + '</span></button>';
-  }).join("");
-  h += '<button class="qres qres-free' + (!list.length ? " on" : "") + '" data-qaddfree="1">' +
-    '<span class="qres-nm">“' + esc(term) + '” adıyla katalog dışı kalem ekle</span>' +
-    '<span class="qres-meta">Sonra “kataloğa ekle” ile listeye kaydedebilirsiniz</span></button>';
+      '<span class="qres-meta">' + meta +
+      (p.priceMissing ? ' <span class="tag tag-warn">fiyat girilmedi</span>'
+        : (p.price > 0 ? ' · <strong>' + esc(fmtMoney(p.price, "TRY")) + '</strong>' : '')) +
+      (lp ? ' · son teklif ' + esc(fmtMoney(lp.price, cur)) : '') + '</span></button>';
+    idx++;
+  });
+  if (!list.length && !term) h += '<div class="qres-grp">Bu grupta ürün yok</div>';
+  if (term) {
+    h += '<button type="button" class="qres qres-free' + (!list.length ? " on" : "") + '" data-qaddfree="1">' +
+      '<span class="qres-nm">“' + esc(term) + '” adıyla katalog dışı kalem ekle</span>' +
+      '<span class="qres-meta">Sonra “kataloğa ekle” ile listeye kaydedebilirsiniz</span></button>';
+  }
+  return h;
+}
+
+/* ================= fiyat listesi içe aktarma özeti ================= */
+
+function money(n) { return fmtMoney(n, "TRY"); }
+
+export function importSummaryHtml(S) {
+  const p = S.importPlan;
+  if (!p) return "";
+  const li = function (arr, fn, max) {
+    const rows = arr.slice(0, max || 40).map(fn).join("");
+    const more = arr.length > (max || 40) ? '<li class="muted">… ve ' + (arr.length - (max || 40)) + ' tane daha</li>' : '';
+    return '<ul class="imp-list">' + rows + more + '</ul>';
+  };
+  let h = '<div class="imp-meta">' + esc(p.source || "Fiyat listesi") +
+    (p.listDate ? ' · liste tarihi <strong>' + esc(p.listDate) + '</strong>' : '') +
+    (p.rate ? ' · kur ' + esc(String(p.rate)) + ' TL' : '') +
+    ' · <strong>' + p.sheetCount + '</strong> ürün' +
+    (p.manualCount ? ' · elle eklenen ' + p.manualCount + ' ürün korunur' : '') + '</div>';
+
+  h += '<div class="imp-kpis">' +
+    '<div class="imp-kpi"><b>' + p.added.length + '</b>yeni</div>' +
+    '<div class="imp-kpi' + (p.priceChanged.length ? " is-warn" : "") + '"><b>' + p.priceChanged.length + '</b>fiyat değişti</div>' +
+    '<div class="imp-kpi"><b>' + p.textChanged.length + '</b>ad/ebat değişti</div>' +
+    '<div class="imp-kpi' + (p.dropped.length ? " is-warn" : "") + '"><b>' + p.dropped.length + '</b>listeden düştü</div>' +
+    (p.reactivated.length ? '<div class="imp-kpi"><b>' + p.reactivated.length + '</b>yeniden aktif</div>' : '') +
+    '</div>';
+
+  if (p.priceChanged.length) {
+    h += '<h3 class="imp-h">Fiyatı değişen</h3>' + li(p.priceChanged, function (c) {
+      return '<li><span class="mono">' + esc(c.id) + '</span> ' + esc(c.name) +
+        ' <span class="imp-price">' + esc(money(c.oldPrice)) + ' → <strong>' + esc(money(c.newPrice)) + '</strong>' +
+        (c.pct !== null ? ' <span class="' + (c.pct >= 0 ? "imp-up" : "imp-down") + '">' + (c.pct >= 0 ? "+" : "") + c.pct + '%</span>' : '') + '</span></li>';
+    });
+  }
+  if (p.added.length) {
+    h += '<h3 class="imp-h">Yeni ürün</h3>' + li(p.added, function (x) {
+      return '<li><span class="mono">' + esc(x.id) + '</span> ' + esc(x.name) + (x.size ? ' <span class="muted">' + esc(x.size) + '</span>' : '') +
+        ' <span class="imp-price">' + (x.priceMissing ? '<span class="tag tag-warn">fiyat girilmedi</span>' : esc(money(x.price))) + '</span></li>';
+    });
+  }
+  if (p.textChanged.length) {
+    h += '<h3 class="imp-h">Adı / ebadı / grubu değişen</h3>' + li(p.textChanged, function (x) {
+      const parts = [];
+      if (x.oldName !== x.newName) parts.push('ad: ' + esc(x.oldName) + ' → ' + esc(x.newName));
+      if (x.oldSize !== x.newSize) parts.push('ebat: ' + esc(x.oldSize || "—") + ' → ' + esc(x.newSize || "—"));
+      if (x.oldGroup !== x.newGroup) parts.push('grup: ' + esc(x.oldGroup || "—") + ' → ' + esc(x.newGroup || "—"));
+      return '<li><span class="mono">' + esc(x.id) + '</span> ' + parts.join(" · ") + '</li>';
+    });
+  }
+  if (p.dropped.length) {
+    h += '<h3 class="imp-h">Listeden düşen — silinmez, pasife alınır</h3>' + li(p.dropped, function (x) {
+      return '<li><span class="mono">' + esc(x.id) + '</span> ' + esc(x.name) + '</li>';
+    });
+  }
+  if (p.warnings.length) {
+    h += '<h3 class="imp-h">Sayfadaki veri uyarıları <span class="muted">(uygulama düzeltmez, sayfada düzeltilmeli)</span></h3>' +
+      li(p.warnings, function (w) { return '<li>' + esc(w) + '</li>'; }, 30);
+  }
+  h += '<p class="muted" style="font-size:12px; margin:12px 0 0">Onaylanınca katalog tek işlemde güncellenir ve günlüğe yazılır. ' +
+    'Mevcut tekliflerdeki kalem fiyatları değişmez.</p>';
   return h;
 }
 
@@ -676,6 +774,40 @@ export function viewSalesSettings(S) {
 
   h += '</div><div style="display:flex; flex-direction:column; gap:16px">';
 
+  /* fiyat listesi kaynağı — yalnızca yönetici */
+  if (isAdmin()) {
+    const src = S.source, meta = data.catalogMeta;
+    const sheetCount = data.products.filter(function (p) { return p.source === "sheet" && isActive(p); }).length;
+    h += '<div class="panel"><div class="panel-head"><h2>Fiyat listesi kaynağı</h2>' +
+      '<span class="muted" style="font-size:12px">Google Sheet · Apps Script köprüsü</span></div><div class="panel-body">';
+    if (!src) {
+      h += '<p class="muted" style="margin:0">Kaynak bilgisi yükleniyor…</p>';
+    } else {
+      h += '<div class="form">' +
+        '<div class="f full"><label for="src-url">Köprü adresi</label>' +
+        '<input id="src-url" data-src="url" type="url" value="' + esc(src.url || "") + '" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off"></div>' +
+        '<div class="f full"><label for="src-key">Anahtar</label>' +
+        '<input id="src-key" data-src="key" type="password" value="' + esc(src.key || "") + '" placeholder="Apps Script’teki ANAHTAR değeri" autocomplete="off"></div>' +
+        '</div>' +
+        '<div class="row-actions" style="margin-top:10px">' +
+        '<button class="btn btn-sm" data-srcsave="1"' + (S.sourceDirty ? "" : " disabled") + '>Kaynağı kaydet</button>' +
+        '<button class="btn btn-sm btn-pri" data-srcimport="1"' + (S.importing ? " disabled" : "") + '>' +
+        (S.importing ? "Liste çekiliyor…" : "Fiyat listesini güncelle") + '</button></div>' +
+        '<div class="qhint" style="margin-top:10px">' +
+        (meta
+          ? 'Son güncelleme: <strong>' + esc(fmtDateTime(meta.at)) + '</strong>' + (meta.byName ? ' · ' + esc(meta.byName) : '') +
+            (meta.listDate ? ' · liste tarihi ' + esc(meta.listDate) : '') + ' · ' + meta.count + ' ürün' +
+            (meta.priceChanged ? ' · ' + meta.priceChanged + ' fiyat değişti' : '') +
+            (meta.warnings ? ' · <span class="qmiss-inline">' + meta.warnings + ' veri uyarısı</span>' : '')
+          : 'Henüz listeden içe aktarılmadı.') +
+        (sheetCount ? '<br>Katalogda listeden gelen <strong>' + sheetCount + '</strong> aktif ürün var.' : '') +
+        '</div>' +
+        '<p class="muted" style="margin:10px 0 0; font-size:12px">Köprü yalnızca kod, ad, ebat, perakende fiyat ve grubu verir; ' +
+        'toptan fiyat ve maliyet sayfada kalır. Adres ve anahtar yalnızca yöneticinin okuyabildiği bir kayıtta durur.</p>';
+    }
+    h += '</div></div>';
+  }
+
   h += '<div class="panel"><div class="panel-head"><h2>Yeni teklif varsayılanları</h2></div><div class="panel-body"><div class="form">' +
     sf("validDays", "Geçerlilik (gün)", d.validDays, { type: "number" }) +
     '<div class="f"><label for="sf-currency">Para birimi</label><select id="sf-currency" data-sf="currency">' +
@@ -703,17 +835,22 @@ export function viewSalesSettings(S) {
   /* katalog */
   const term = trLower(S.pSearch || "").trim();
   const groups = productGroups();
+  const inactiveCount = data.products.filter(function (p) { return !isActive(p); }).length;
   const list = data.products.filter(function (p) {
-    return !term || trLower(p.name + " " + (p.code || "") + " " + (p.group || "")).indexOf(term) !== -1;
+    if (!isActive(p) && !S.pShowInactive) return false;
+    return !term || trLower([p.name, p.code, p.codeRaw, p.size, p.group].filter(Boolean).join(" ")).indexOf(term) !== -1;
   });
-  h += '<div class="panel"><div class="panel-head"><h2>Ürün kataloğu</h2><span class="muted mono">' + data.products.length + '</span></div>' +
+  h += '<div class="panel"><div class="panel-head"><h2>Ürün kataloğu</h2><span class="muted mono">' + activeProducts().length + '</span></div>' +
     '<div class="panel-body pcat-add"><div class="pcat-grid">' +
-    '<input id="pn-name" class="inp" placeholder="Yeni ürün adı" aria-label="Yeni ürün adı" autocomplete="off">' +
+    '<input id="pn-name" class="inp" placeholder="Yeni ürün adı (listede olmayan)" aria-label="Yeni ürün adı" autocomplete="off">' +
     '<select id="pn-unit" class="inp" aria-label="Birim">' + units().map(function (u) { return '<option>' + esc(u) + '</option>'; }).join("") + '</select>' +
     '<input id="pn-group" class="inp" list="p-groups" placeholder="Grup" aria-label="Grup" autocomplete="off">' +
     '<input id="pn-code" class="inp mono" placeholder="Kod" aria-label="Ürün kodu" autocomplete="off">' +
     '<button class="btn btn-sm btn-pri" data-padd="1">Ekle</button></div>' +
-    '<input id="p-search" class="inp-sm" type="search" placeholder="Katalogda ara…" value="' + esc(S.pSearch || "") + '" aria-label="Katalogda ara" autocomplete="off" style="margin-top:10px"></div>';
+    '<div class="row-actions" style="margin-top:10px; align-items:center">' +
+    '<input id="p-search" class="inp-sm" type="search" placeholder="Kod, ad, ebat…" value="' + esc(S.pSearch || "") + '" aria-label="Katalogda ara" autocomplete="off" style="width:220px">' +
+    (inactiveCount ? '<button class="btn btn-sm btn-ghost" data-pinactive="1">' + (S.pShowInactive ? "Pasifleri gizle" : "Pasifleri göster (" + inactiveCount + ")") + '</button>' : '') +
+    '</div></div>';
   if (!list.length) h += '<div class="empty"><h3>' + (data.products.length ? "Aramayla eşleşen ürün yok" : "Katalog boş") + '</h3></div>';
   groups.concat([""]).forEach(function (g) {
     const items = list.filter(function (p) { return (p.group || "") === g; });
@@ -721,6 +858,20 @@ export function viewSalesSettings(S) {
     h += '<div class="gband"><span>' + esc(g || "Grupsuz") + '</span><span class="n">' + items.length + '</span></div><div class="panel-body" style="padding:4px 14px">';
     items.forEach(function (p) {
       const used = productUsage(p.id);
+      if (p.source === "sheet") {
+        // Listeden gelen ürün elle düzenlenmez; bir sonraki içe aktarma üzerine yazar.
+        h += '<div class="pcat-row pcat-sheet' + (isActive(p) ? "" : " is-off") + '">' +
+          '<div><div class="pcat-name">' + esc(p.name) +
+            (isActive(p) ? '' : ' <span class="tag tag-arch">listeden düştü</span>') +
+            (p.priceMissing ? ' <span class="tag tag-warn">fiyat girilmedi</span>' : '') + '</div>' +
+          '<div class="muted" style="font-size:11.5px">' + esc([p.codeRaw || p.code, p.size].filter(Boolean).join(" · ")) + '</div></div>' +
+          '<select id="pf-' + esc(p.id) + '-unit" class="inp" data-pf="' + esc(p.id) + ':unit" aria-label="Birim">' +
+            units().map(function (u) { return '<option' + (u === p.unit ? " selected" : "") + '>' + esc(u) + '</option>'; }).join("") + '</select>' +
+          '<span class="mono pcat-price">' + (p.priceMissing ? '—' : esc(fmtMoney(p.price, "TRY"))) + '</span>' +
+          '<span class="muted pcat-used" title="Bu ürünün geçtiği teklif sayısı">' + (used ? used + " teklif" : "") + '</span>' +
+          '<span class="tag" title="Fiyat listesinden">liste</span></div>';
+        return;
+      }
       h += '<div class="pcat-row">' +
         '<input id="pf-' + esc(p.id) + '-name" class="inp" data-pf="' + esc(p.id) + ':name" value="' + esc(p.name) + '" aria-label="Ürün adı" autocomplete="off">' +
         '<select id="pf-' + esc(p.id) + '-unit" class="inp" data-pf="' + esc(p.id) + ':unit" aria-label="Birim">' +
@@ -733,7 +884,8 @@ export function viewSalesSettings(S) {
     h += '</div>';
   });
   h += '<datalist id="p-groups">' + groups.map(function (g) { return '<option value="' + esc(g) + '"></option>'; }).join("") + '</datalist>';
-  h += '<div class="panel-body"><p class="muted" style="margin:0; font-size:12px">Katalogdan ürün silmek ya da adını değiştirmek ' +
-    'gönderilmiş teklifleri değiştirmez; teklifteki kalem kendi adını saklar.</p></div>';
+  h += '<div class="panel-body"><p class="muted" style="margin:0; font-size:12px">Katalogdan ürün silmek ya da fiyatını değiştirmek ' +
+    'mevcut teklifleri değiştirmez; teklifteki kalem kendi adını ve fiyatını saklar. ' +
+    'Listeden gelen ürünler burada düzenlenmez, sayfada düzeltilip yeniden içe aktarılır.</p></div>';
   return h + '</div>';
 }
