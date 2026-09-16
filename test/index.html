@@ -22,6 +22,22 @@
     };
   })();
 </script>
+<script>
+  // Tarayıcı içi koşucu için: sayfa yenilense de JS hataları biriksin.
+  (function () {
+    var KEY = "toysmar.testerrors";
+    function push(msg) {
+      try {
+        var list = JSON.parse(sessionStorage.getItem(KEY) || "[]");
+        list.push(String(msg)); sessionStorage.setItem(KEY, JSON.stringify(list));
+      } catch (e) {}
+    }
+    window.addEventListener("error", function (e) { push(e.message || "hata"); });
+    window.addEventListener("unhandledrejection", function (e) { push("promise: " + ((e.reason && e.reason.message) || e.reason)); });
+    var ce = console.error;
+    console.error = function () { push("console: " + [].slice.call(arguments).join(" ")); ce.apply(console, arguments); };
+  })();
+</script>
 <script src="mock-firebase.js"></script>
 <script>
   // Yapılandırma kontrolünü geçmek için sahte değerler.
