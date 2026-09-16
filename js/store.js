@@ -7,7 +7,7 @@ import {
   myEmail, myName, myRole, isAdmin, canPlan, canSell, canAccount,
   seesAll, myDept, mySection, myPersonId
 } from "./auth.js";
-import { uid } from "./util.js";
+import { uid, byId } from "./util.js";
 import { CATALOG_VERSION, DEFAULT_SECTIONS, LEGACY_DEPT_MAP } from "./seed.js";
 
 export const data = {
@@ -19,6 +19,7 @@ export const data = {
   requests: [],                   // requests/* (bekleyen erişim talepleri)
   projects: [], tasks: [],
   files: [],                      // files/*    (iş emrine bağlı dosya kayıtları)
+  locks: {},                      // locks/<projectId> — kilitler için iş emri durum özeti
   accounting: {},                 // accounting/<projectId> (yalnızca yönetici ve muhasebe)
   quotes: [],                     // quotes/*   (yalnızca satış rollerinde)
   sales: null,                    // sales/settings
@@ -98,6 +99,15 @@ export async function subscribeAll(onChange, onError) {
     data.files = rows;
     onChange();
   }, fail("dosyalar"));
+
+  // Kilit özeti: projedeki iş emirlerinin durumları (js/locks.js). Görünürlük
+  // kapsamı dışındaki iş emirleri de buradan değerlendirilir; gizli bilgi taşımaz.
+  unsubs.push(f.onSnapshot(f.collection(f.db, "locks"), function (s) {
+    const map = {};
+    rowsOf(s).forEach(function (r) { map[r.id] = r; });
+    data.locks = map;
+    onChange();
+  }, fail("kilit özeti")));
 
   // Muhasebe bilgileri proje belgesinde değil, ayrı koleksiyonda: diğer roller okuyamaz.
   if (canAccount()) {
@@ -234,9 +244,28 @@ export async function loadLog(n) {
 
 /* ---------------- yazma ---------------- */
 
+// Kilit özetine yazılan alanlar: kilidin değerlendirmesi için gereken en az bilgi.
+export function lockEntry(t) {
+  return {
+    name: t.name || "", stepId: t.stepId || "", group: t.group || "", dept: t.dept || "", section: t.section || "",
+    type: t.type || "check", unit: t.unit || "", qty: t.qty == null ? "" : String(t.qty), doneQty: t.doneQty == null ? "" : String(t.doneQty),
+    status: t.status || "bekliyor", orderStatus: t.orderStatus || "", shortClosed: !!t.shortClosed
+  };
+}
+
+function lockPatch(tasks) {
+  const items = {};
+  tasks.forEach(function (t) { items[t.id] = t === null ? null : lockEntry(t); });
+  return { items: items, updatedAt: new Date().toISOString() };
+}
+
 export async function saveTask(id, patch, logText) {
   const f = await fb();
   await f.updateDoc(f.doc(f.db, "tasks", id), patch);
+  const t = byId(data.tasks, id);
+  if (t && t.projectId) {
+    await f.setDoc(f.doc(f.db, "locks", t.projectId), lockPatch([Object.assign({}, t, patch)]), { merge: true });
+  }
   if (logText) writeLog("is-emri", id, logText);
 }
 
@@ -281,6 +310,7 @@ export async function createProject(projectId, project, tasks) {
     const tid = t.id; const body = Object.assign({}, t); delete body.id;
     batch.set(f.doc(f.db, "tasks", tid), body);
   });
+  batch.set(f.doc(f.db, "locks", projectId), lockPatch(tasks), { merge: true });
   await batch.commit();
   writeLog("proje-olustur", projectId, project.name + " — " + tasks.length + " iş emri");
 }
@@ -292,6 +322,7 @@ export async function addTasks(projectId, tasks) {
     const tid = t.id; const body = Object.assign({}, t); delete body.id;
     batch.set(f.doc(f.db, "tasks", tid), body);
   });
+  batch.set(f.doc(f.db, "locks", projectId), lockPatch(tasks), { merge: true });
   await batch.commit();
   writeLog("adim-ekle", projectId, tasks.length + " adım eklendi");
 }
@@ -308,7 +339,12 @@ export async function createJob(task) {
 // Kalıcı silme yalnızca yöneticide (kurallar da öyle).
 export async function deleteTask(id, name) {
   const f = await fb();
+  const t = byId(data.tasks, id);
   await f.deleteDoc(f.doc(f.db, "tasks", id));
+  if (t && t.projectId) {
+    const items = {}; items[id] = null;
+    await f.setDoc(f.doc(f.db, "locks", t.projectId), { items: items, updatedAt: new Date().toISOString() }, { merge: true });
+  }
   writeLog("is-emri-sil", id, (name || "") + " silindi");
 }
 
@@ -328,6 +364,7 @@ export async function hardDeleteProject(id, name, taskIds) {
   const batch = f.writeBatch(f.db);
   (taskIds || []).forEach(function (tid) { batch.delete(f.doc(f.db, "tasks", tid)); });
   batch.delete(f.doc(f.db, "projects", id));
+  batch.delete(f.doc(f.db, "locks", id));
   await batch.commit();
   writeLog("proje-sil", id, (name || "") + " — " + (taskIds || []).length + " iş emri kalıcı silindi");
 }
