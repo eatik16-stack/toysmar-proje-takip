@@ -128,6 +128,15 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // --- kilit özeti ------------------------------------------------------
+    // Sevkiyat / Montaj / "Malzemeler geldi" kilitleri projedeki diğer iş
+    // emirlerinin durumuna bakar; şef ve personel o iş emirlerini okuyamaz.
+    // Her iş emri yazımı buraya küçük bir özet bırakır (ad, adım, departman,
+    // durum, sipariş durumu, adet). Tutar ya da kişisel bilgi içermez.
+    match /locks/{doc} {
+      allow read, write: if isAllowed();
+    }
+
     // --- iş emri dosyaları ---------------------------------------------
     // Dosya kaydı iş emrinin departman/bölümünü taşır; görünürlük aynı.
     // Dosya silinmez, yalnızca arşive alınır (archived alanı).
