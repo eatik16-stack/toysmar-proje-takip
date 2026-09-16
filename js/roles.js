@@ -48,6 +48,9 @@ export const PLANNER_ROLES = ["yonetici", "planlamaci"];
 // Teklif hazırlayan ve fiyatları görebilen roller.
 export const SALES_ROLES = ["yonetici", "satis"];
 
+// Proje muhasebe bilgilerini (tutar, ödeme, borç-alacak) gören ve yazan roller.
+export const ACCOUNT_ROLES = ["yonetici", "muhasebe"];
+
 export function roleDef(role) {
   return ROLES[role] || ROLES[DEFAULT_ROLE];
 }

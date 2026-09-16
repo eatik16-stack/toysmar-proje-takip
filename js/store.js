@@ -3,7 +3,7 @@
 // salt eklemedir (kurallarda update/delete kapalı), yani geçmiş kaybolmaz.
 
 import { fb } from "./fb.js";
-import { myEmail, myName, myRole, isAdmin, canPlan, canSell } from "./auth.js";
+import { myEmail, myName, myRole, isAdmin, canPlan, canSell, canAccount } from "./auth.js";
 import { uid } from "./util.js";
 import { CATALOG_VERSION, DEFAULT_SECTIONS, LEGACY_DEPT_MAP } from "./seed.js";
 
@@ -15,6 +15,7 @@ export const data = {
   members: [],                    // allowed/*  (giriş yetkisi olanlar)
   requests: [],                   // requests/* (bekleyen erişim talepleri)
   projects: [], tasks: [],
+  accounting: {},                 // accounting/<projectId> (yalnızca yönetici ve muhasebe)
   quotes: [],                     // quotes/*   (yalnızca satış rollerinde)
   sales: null,                    // sales/settings
   products: [],                   // sales/catalog
@@ -86,6 +87,18 @@ export async function subscribeAll(onChange, onError) {
     data.loaded.tasks = true; onChange();
   }, fail("iş emirleri")));
 
+  // Muhasebe bilgileri proje belgesinde değil, ayrı koleksiyonda: diğer roller okuyamaz.
+  if (canAccount()) {
+    unsubs.push(f.onSnapshot(f.collection(f.db, "accounting"), function (s) {
+      const map = {};
+      rowsOf(s).forEach(function (r) { map[r.id] = r; });
+      data.accounting = map;
+      onChange();
+    }, fail("muhasebe bilgileri")));
+  } else {
+    data.accounting = {};
+  }
+
   // Fiyatlar yalnızca satış rollerine açık; diğer rollerde kurallar reddeder.
   if (canSell()) {
     unsubs.push(f.onSnapshot(f.collection(f.db, "quotes"), function (s) {
@@ -151,6 +164,33 @@ export async function saveProject(id, patch, logText) {
   const f = await fb();
   await f.updateDoc(f.doc(f.db, "projects", id), patch);
   if (logText) writeLog("proje", id, logText);
+}
+
+// Proje kodu (panel kodu) benzersizdir; arşivdeki projeler de sayılır.
+export function normalizeCode(code) {
+  return String(code || "").trim().toLocaleUpperCase("tr-TR").replace(/\s+/g, "");
+}
+
+export function codeTaken(code, exceptId) {
+  const c = normalizeCode(code);
+  if (!c) return false;
+  return data.projects.some(function (p) { return p.id !== exceptId && normalizeCode(p.code) === c; });
+}
+
+// Muhasebe bilgileri: tutar, ödeme ve konuşulan detay, nakliye/montaj dahil mi, borç-alacak.
+export function accountingOf(pid) {
+  return data.accounting[pid] || {
+    total: "", paymentDetail: "", discussedDetail: "", shippingIncluded: "", installIncluded: "",
+    shippingNote: "", balance: ""
+  };
+}
+
+export async function saveAccounting(pid, body, logText) {
+  const f = await fb();
+  await f.setDoc(f.doc(f.db, "accounting", pid), Object.assign({}, body, {
+    updatedAt: new Date().toISOString(), updatedBy: myEmail()
+  }));
+  writeLog("muhasebe", pid, logText || "muhasebe bilgileri güncellendi");
 }
 
 export async function createProject(projectId, project, tasks) {

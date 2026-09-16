@@ -7,7 +7,7 @@
 
 import { fb } from "./fb.js";
 import { lsGet, lsSet } from "./util.js";
-import { DEFAULT_ROLE, PLANNER_ROLES, SALES_ROLES, roleSees } from "./roles.js";
+import { DEFAULT_ROLE, PLANNER_ROLES, SALES_ROLES, ACCOUNT_ROLES, roleSees } from "./roles.js";
 
 // Doğrulanmamış hesap Firestore'a yazamaz (kurallar email_verified istiyor),
 // bu yüzden talep bilgisi doğrulama tamamlanana kadar tarayıcıda bekler.
@@ -40,6 +40,11 @@ export function canPlan() {
 // Teklif hazırlayan ve fiyat gören roller.
 export function canSell() {
   return !!session.member && SALES_ROLES.indexOf(myRole()) !== -1;
+}
+
+// Proje muhasebe sekmesini gören ve düzenleyen roller.
+export function canAccount() {
+  return !!session.member && ACCOUNT_ROLES.indexOf(myRole()) !== -1;
 }
 
 export function canSee(view) {
