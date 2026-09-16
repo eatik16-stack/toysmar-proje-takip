@@ -8,6 +8,7 @@ import { quoteScenario } from "./quote-scenario.mjs";
 import { jobScenario } from "./job-scenario.mjs";
 import { priceScenario } from "./price-scenario.mjs";
 import { stepsScenario } from "./steps-scenario.mjs";
+import { visibilityScenario } from "./visibility-scenario.mjs";
 
 export async function runSuite(t) {
   const ok = t.ok;
@@ -142,16 +143,16 @@ export async function runSuite(t) {
   await t.fill("#m-name", "Ayşe Yılmaz");
   await t.select("#m-dept", "d-uretim"); await t.wait(100);
   ok("bölümlü departman seçilince bölüm alanı açıldı", !(await t.prop("#m-section-wrap", "hidden")));
-  await t.select("#m-section", "kaplama");
+  await t.select("#m-section", "metal");
   await t.fill("#m-email", "ayse@toysmar.test");
   await t.select("#m-role", "personel");
   await t.click("[data-msave]"); await t.wait(600);
   d = await db();
   const ayse = (d["config/org"]?.people || []).find(function (p) { return p.name === "Ayşe Yılmaz"; });
   ok("personel listeye eklendi", !!ayse);
-  ok("personelin bölümü kaydedildi", !!ayse && ayse.dept === "d-uretim" && ayse.section === "kaplama");
+  ok("personelin bölümü kaydedildi", !!ayse && ayse.dept === "d-uretim" && ayse.section === "metal");
   ok("giriş yetkisi verildi", !!d["allowed/ayse@toysmar.test"], Object.keys(d).filter(function (k) { return k.startsWith("allowed/"); }).join(","));
-  ok("rolü personel, bölümü yetki kaydında da var", d["allowed/ayse@toysmar.test"]?.role === "personel" && d["allowed/ayse@toysmar.test"]?.section === "kaplama");
+  ok("rolü personel, bölümü yetki kaydında da var", d["allowed/ayse@toysmar.test"]?.role === "personel" && d["allowed/ayse@toysmar.test"]?.section === "metal");
 
   t.section("7) Departman ve katalog adımı ekleme");
   await t.click("[data-adddept]"); await t.wait(250);
@@ -339,7 +340,7 @@ export async function runSuite(t) {
   nav = await txt("#nav");
   ok("personel Proje Dışı İşler sekmesini görüyor", nav.includes("Proje Dışı İşler"), nav);
   await t.click('[data-nav="projedisi"]'); await t.wait(400);
-  ok("personel proje dışı iş emri açamıyor", (await t.count("[data-newjob]")) === 0);
+  ok("personel de başka departmana iş emri açabiliyor", (await t.count("[data-newjob]")) >= 1);
 
   t.section("18) Fiyat listesi (Google Sheet köprüsü)");
   await t.eval(function () { localStorage.setItem("toysmar.view", "teklifler"); });
@@ -354,6 +355,9 @@ export async function runSuite(t) {
   await t.eval(function () { localStorage.setItem("toysmar.view", "projeler"); });
   await t.goto(APP);
   await stepsScenario(t);
+
+  t.section("20) Görünürlük: rol, departman, bölüm");
+  await visibilityScenario(t);
 
   const errors = t.errors();
   ok("JS hatası yok", !errors.length, errors.slice(0, 3).join(" | "));

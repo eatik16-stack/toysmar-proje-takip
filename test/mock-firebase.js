@@ -68,8 +68,22 @@
       data: function () { return body === undefined ? undefined : deepFreeze(clone(body)); }
     };
   }
-  function colSnap(col) {
+  // where() süzgeci: gerçek Firestore gibi yalnızca eşleşen belgeler döner.
+  function matches(body, w) {
+    const v = body ? body[w[0]] : undefined;
+    if (w[1] === "==") return v === w[2];
+    if (w[1] === "!=") return v !== w[2];
+    if (w[1] === "in") return (w[2] || []).indexOf(v) !== -1;
+    if (w[1] === ">=") return v >= w[2];
+    if (w[1] === "<=") return v <= w[2];
+    if (w[1] === ">") return v > w[2];
+    if (w[1] === "<") return v < w[2];
+    return true;
+  }
+  function colSnap(col, q) {
+    const ws = (q && q.__where) || [];
     const rows = Object.keys(DB).filter(function (p) { return p.indexOf(col + "/") === 0; })
+      .filter(function (p) { return ws.every(function (w) { return matches(DB[p], w); }); })
       .map(function (p) { return docSnap(p); });
     return {
       docs: rows, size: rows.length, empty: !rows.length,
@@ -79,7 +93,7 @@
   function fire(path) {
     const col = path.split("/")[0];
     docListeners.filter(function (l) { return l.path === path; }).forEach(function (l) { l.cb(docSnap(path)); });
-    colListeners.filter(function (l) { return l.col === col; }).forEach(function (l) { l.cb(colSnap(col)); });
+    colListeners.filter(function (l) { return l.col === col; }).forEach(function (l) { l.cb(colSnap(col, l.q)); });
   }
 
   function ref(col, id) { return { __path: col + "/" + id, __col: col, id: id }; }
@@ -150,7 +164,7 @@
     getDoc: function (r) { return Promise.resolve(docSnap(r.__path)); },
     getDocs: function (q) {
       const col = q.__col;
-      let rows = colSnap(col).docs;
+      let rows = colSnap(col, q).docs;
       if (q.__order) {
         rows = rows.slice().sort(function (a, b) {
           const av = String((a.data() || {})[q.__order.field] || "");
@@ -194,18 +208,22 @@
         docListeners.push({ path: target.__path, cb: cb });
         setTimeout(function () { cb(docSnap(target.__path)); }, 0);
       } else {
-        colListeners.push({ col: target.__col, cb: cb });
-        setTimeout(function () { cb(colSnap(target.__col)); }, 0);
+        colListeners.push({ col: target.__col, q: target, cb: cb });
+        setTimeout(function () { cb(colSnap(target.__col, target)); }, 0);
       }
       return function () {};
     },
 
     query: function (c) {
-      const q = { __col: c.__col };
-      for (let i = 1; i < arguments.length; i++) Object.assign(q, arguments[i]);
+      const q = { __col: c.__col, __where: [] };
+      for (let i = 1; i < arguments.length; i++) {
+        const part = arguments[i] || {};
+        if (part.__where) q.__where = q.__where.concat(part.__where);
+        else Object.assign(q, part);
+      }
       return q;
     },
-    where: function () { return {}; },
+    where: function (field, op, value) { return { __where: [[field, op, value]] }; },
     orderBy: function (field, dir) { return { __order: { field: field, dir: dir || "asc" } }; },
     limit: function (n) { return { __limit: n }; },
 
@@ -250,7 +268,7 @@
             docListeners.filter(function (l) { return l.path === o[1]; }).forEach(function (l) { l.cb(docSnap(o[1])); });
           });
           Object.keys(cols).forEach(function (c) {
-            colListeners.filter(function (l) { return l.col === c; }).forEach(function (l) { l.cb(colSnap(c)); });
+            colListeners.filter(function (l) { return l.col === c; }).forEach(function (l) { l.cb(colSnap(c, l.q)); });
           });
           return Promise.resolve();
         }
