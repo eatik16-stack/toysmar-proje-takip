@@ -257,8 +257,25 @@
       };
     },
 
-    serverTimestamp: function () { return new Date().toISOString(); }
+    serverTimestamp: function () { return new Date().toISOString(); },
+
+    /* ---- storage (sahte) ---- */
+    // Yüklenen dosyalar bellekte tutulur; window.__MOCK_STORAGE_FAIL__ = "kod" ile
+    // Storage'ın kapalı olduğu durum taklit edilir.
+    storageApi: {
+      ref: function (path) { return { path: path }; },
+      uploadBytes: function (r, blob, meta) {
+        if (window.__MOCK_STORAGE_FAIL__) {
+          const err = new Error("Firebase Storage: An unknown error occurred");
+          err.code = window.__MOCK_STORAGE_FAIL__; return Promise.reject(err);
+        }
+        window.__MOCK_STORAGE__[r.path] = { size: blob.size, type: (meta && meta.contentType) || blob.type || "" };
+        return Promise.resolve();
+      },
+      getDownloadURL: function (r) { return Promise.resolve("mock://" + r.path); }
+    }
   };
+  window.__MOCK_STORAGE__ = {};
 
   window.__TOYSMAR_MOCK__ = api;
 })();
