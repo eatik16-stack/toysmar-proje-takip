@@ -6,7 +6,7 @@ import {
   numOf, needOf, doneOf, shortOf
 } from "./util.js";
 import {
-  session, canSee, canSell, isAdmin, myEmail, myName,
+  session, canSee, canSell, isAdmin, myEmail, myName, myDept,
   watchSession, signIn, signInWithPassword, signOutNow, resetPassword,
   registerAndRequest, submitRequest, resendVerification, refreshSession
 } from "./auth.js";
@@ -747,7 +747,9 @@ async function saveModal() {
           qty: type === "qty" ? val("qty").trim() : "", doneQty: "", shortClosed: false,
           orderStatus: "", note: "", dueDate: val("dueDate"), status: "bekliyor", urgent: urgent,
           completedAt: "", completedBy: "", completedByName: "",
-          order: 0, createdAt: now, createdBy: myEmail(), createdByName: myName()
+          order: 0, createdAt: now, createdBy: myEmail(), createdByName: myName(),
+          // Açan kişi ve departmanı: başka departmana açılan iş "Açtıklarım"da izlenir.
+          openedBy: myEmail(), openedByName: myName(), openedByDept: myDept()
         };
         await guard(store.createJob(job));
         toast("“" + name + "” iş emri " + store.deptName(job.dept) + " departmanına açıldı.");
@@ -862,10 +864,11 @@ document.addEventListener("click", async function (e) {
     if (!req) return;
     const sel = document.querySelector('[data-reqrole="' + id + '"]');
     const dsel = document.querySelector('[data-reqdept="' + id + '"]');
+    const ssel = document.querySelector('[data-reqsection="' + id + '"]');
     const role = (sel && sel.value) || "personel";
     const dept = dsel && dsel.value;
     el.disabled = true;
-    await guard(store.approveRequest(req, role, dept));
+    await guard(store.approveRequest(req, role, dept, ssel ? ssel.value : ""));
     toast((req.name || id) + " · " + roleDef(role).label + " · " + store.deptName(dept) + " olarak eklendi.");
     render();
     return;
@@ -991,6 +994,12 @@ document.addEventListener("change", async function (e) {
   const t = e.target;
 
   if (t.id === "job-dept") { S.jobDept = t.value; render(); return; }
+  // Talep onayında departman değişince bölüm listesi o departmana göre yenilenir.
+  if (t.hasAttribute && t.hasAttribute("data-reqdept")) {
+    const sec = document.querySelector('[data-reqsection="' + t.getAttribute("data-reqdept") + '"]');
+    if (sec) { sec.innerHTML = sectionOptions(t.value, ""); sec.hidden = !store.sectionsOf(t.value).length; }
+    return;
+  }
   // Pencerelerde departman değişince bölüm ve sorumlu listeleri o departmana göre yenilenir.
   if (S.modal && t.id === "m-dept") { refreshModalDept(); return; }
   if (S.modal && t.id === "m-section") {
