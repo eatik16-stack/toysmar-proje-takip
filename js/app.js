@@ -17,8 +17,9 @@ import * as QV from "./quote-views.js";
 import * as QA from "./quote-app.js";
 import { linkProject, quoteLabel } from "./quotes.js";
 import { ROLE_ORDER, roleDef } from "./roles.js";
-import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS, DEFAULT_SECTIONS, STEP_TYPES } from "./seed.js";
+import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS, DEFAULT_SECTIONS, STEP_TYPES, quoteItemStep, orderStatusLabel } from "./seed.js";
 import { filesOf, uploadTaskFile, archiveFile, storageHint, checkFile } from "./files.js";
+import { lockReasons, isPurchase } from "./locks.js";
 
 const S = {
   view: lsGet("toysmar.view") || "panel",
@@ -326,6 +327,23 @@ function startProjectFromQuote(q) {
   S.wizard.p.address = [c.address, c.city].filter(Boolean).join(", ");
   S.wizard.quoteId = q.id;
   S.wizard.quoteNo = quoteLabel(q);
+  // Teklif kalemleri → satın alma adımları (seed.js QUOTE_STEP_MAP). Eşleşen kalem
+  // adedi ve adıyla ön seçilir; eşleşmeyenler "serbest kalem" olarak listelenir.
+  S.wizard.freeItems = [];
+  S.wizard.preset = 0;
+  (q.items || []).forEach(function (it) {
+    if (!it || it.kind === "head" || !it.name) return;
+    const sid = quoteItemStep(it.name);
+    const st = sid ? byId(data.steps, sid) : null;
+    if (!st) { S.wizard.freeItems.push({ name: it.name, qty: it.qty }); return; }
+    const cur = S.wizard.sel[sid];
+    const total = (cur ? numOf(cur.qty) : 0) + numOf(it.qty);
+    S.wizard.sel[sid] = {
+      dept: st.dept, section: st.section || "", assignee: "", qty: total ? String(total) : "",
+      spec: cur && cur.spec ? cur.spec + " · " + it.name : it.name, dueDate: ""
+    };
+    S.wizard.preset++;
+  });
   go("yeni");
 }
 
@@ -334,8 +352,14 @@ async function toggleTask(id, force) {
   const unit = t.unit || "adet";
 
   if (t.status === "tamam") {
-    await guard(store.saveTask(id, { status: "bekliyor", completedAt: "", completedBy: "", completedByName: "", shortClosed: false },
+    await guard(store.saveTask(id, { status: "bekliyor", completedAt: "", completedBy: "", completedByName: "", shortClosed: false, lockOverride: false },
       "“" + t.name + "” geri alındı"));
+    return;
+  }
+  // Kilit (6a): bekleyen koşullar varken kapanmaz; yalnızca yönetici "Kilidi aş" ile geçer.
+  const locks = lockReasons(t);
+  if (locks.length && !(force && isAdmin())) {
+    toast("“" + t.name + "” için önce: " + locks.slice(0, 3).join(", ") + (locks.length > 3 ? " (+" + (locks.length - 3) + ")" : "") + ".");
     return;
   }
   // Dosya tipinde en az bir dosya, metin tipinde metin olmadan tamamlanmaz.
@@ -353,10 +377,21 @@ async function toggleTask(id, force) {
     status: "tamam", completedAt: new Date().toISOString(),
     completedBy: myEmail(), completedByName: myName()
   };
-  if (force && need > 0 && made < need) {
+  if (locks.length) {
+    patch.lockOverride = true; patch.lockOverrideBy = myName(); patch.lockOverrideNote = locks.join(", ");
+  }
+  const shortClose = force && need > 0 && made < need;
+  // Satın alma kalemi kapanınca sipariş durumu da kapanır: tam ise geldi, eksik kapatıldıysa eksik.
+  if (isPurchase(t)) patch.orderStatus = shortClose ? "eksik" : "geldi";
+  if (shortClose) {
     patch.shortClosed = true; patch.shortNeed = need; patch.doneQty = String(made);
-    await guard(store.saveTask(id, patch, "“" + t.name + "” eksik kapatıldı: " + made + "/" + need + " " + unit));
+    await guard(store.saveTask(id, patch, "“" + t.name + "” eksik kapatıldı: " + made + "/" + need + " " + unit +
+      (locks.length ? " · kilit aşıldı: " + locks.join(", ") : "")));
     toast("“" + t.name + "” eksik kapatıldı: " + made + "/" + need + " " + unit + ".");
+  } else if (locks.length) {
+    patch.shortClosed = false;
+    await guard(store.saveTask(id, patch, "“" + t.name + "” kilit aşıldı: " + locks.join(", ")));
+    toast("“" + t.name + "” kilit aşılarak tamamlandı. Bekleyen koşullar günlüğe yazıldı.");
   } else {
     patch.shortClosed = false;
     await guard(store.saveTask(id, patch, "“" + t.name + "” tamamlandı"));
@@ -427,7 +462,7 @@ async function createProjectNow() {
       type: s.type || "check", unit: s.unit || "",
       dept: v.dept || s.dept || "", section: v.section || s.section || "", assignee: v.assignee || "",
       qty: v.qty || "", doneQty: "", shortClosed: false,
-      spec: v.spec || "", orderStatus: "", note: "",
+      spec: v.spec || "", supplier: v.supplier || "", orderStatus: "", note: "",
       dueDate: v.dueDate || w.p.dueDate || "", status: "bekliyor",
       completedAt: "", completedBy: "", completedByName: "",
       order: (s.order || i) * 10, createdAt: now
@@ -455,7 +490,7 @@ async function addStepsNow(pid, ids) {
     return {
       id: uid(), projectId: pid, stepId: s.id, name: s.name, group: s.group,
       type: s.type || "check", unit: s.unit || "", dept: s.dept || "", section: s.section || "", assignee: "",
-      qty: "", doneQty: "", shortClosed: false, spec: "", orderStatus: "", note: "",
+      qty: "", doneQty: "", shortClosed: false, spec: "", supplier: "", orderStatus: "", note: "",
       dueDate: (p && p.dueDate) || "", status: "bekliyor",
       completedAt: "", completedBy: "", completedByName: "",
       order: (s.order || (base + i)) * 10, createdAt: now
@@ -745,7 +780,7 @@ async function saveModal() {
           type: type, unit: type === "qty" ? (val("unit").trim() || "adet") : "",
           dept: val("dept"), section: val("section"), assignee: val("assignee"),
           qty: type === "qty" ? val("qty").trim() : "", doneQty: "", shortClosed: false,
-          orderStatus: "", note: "", dueDate: val("dueDate"), status: "bekliyor", urgent: urgent,
+          supplier: "", orderStatus: "", note: "", dueDate: val("dueDate"), status: "bekliyor", urgent: urgent,
           completedAt: "", completedBy: "", completedByName: "",
           order: 0, createdAt: now, createdBy: myEmail(), createdByName: myName(),
           // Açan kişi ve departmanı: başka departmana açılan iş "Açtıklarım"da izlenir.
@@ -919,6 +954,7 @@ document.addEventListener("click", async function (e) {
   }
   if ((el = e.target.closest("[data-toggle]"))) { await toggleTask(el.getAttribute("data-toggle")); return; }
   if ((el = e.target.closest("[data-shortclose]"))) { await toggleTask(el.getAttribute("data-shortclose"), true); return; }
+  if ((el = e.target.closest("[data-override]"))) { await toggleTask(el.getAttribute("data-override"), true); return; }
   if ((el = e.target.closest("[data-start]"))) {
     const t = byId(data.tasks, el.getAttribute("data-start"));
     await guard(store.saveTask(el.getAttribute("data-start"), { status: "devam" }, "“" + (t ? t.name : "") + "” başlatıldı"));
@@ -1066,12 +1102,20 @@ document.addEventListener("change", async function (e) {
       if (v && task.status !== "tamam") toast("“" + task.name + "” tamamlandı.");
       return;
     }
+    else if (f === "orderStatus") {
+      // Sipariş durumu "geldi" olunca gelen adet girilmemişse gereken kadar sayılır.
+      patch = { orderStatus: t.value };
+      if (t.value === "geldi" && (task.doneQty === "" || task.doneQty === null || task.doneQty === undefined) && numOf(task.qty))
+        patch.doneQty = String(numOf(task.qty));
+      await guard(store.saveTask(tid, patch, task.name + " · sipariş durumu: " + (orderStatusLabel(t.value) || "—")));
+      return;
+    }
     else {
       patch = {}; patch[f] = t.value;
       if (f === "dept") { patch.section = ""; patch.assignee = ""; }
       if (f === "section") patch.assignee = "";
     }
-    await guard(store.saveTask(tid, patch, task.name + " · " + f + " = " + t.value));
+    await guard(store.saveTask(tid, patch, task.name + " · " + (f === "supplier" ? "tedarikçi" : f) + " = " + t.value));
     return;
   }
 
