@@ -262,7 +262,10 @@ function go(view) {
   render();
 }
 
-function openProject(id) { S.projectId = id; S.view = "proje"; window.scrollTo(0, 0); render(); }
+function openProject(id) {
+  if (S.projectId !== id) S.projTab = "isler";
+  S.projectId = id; S.view = "proje"; window.scrollTo(0, 0); render();
+}
 
 /* ==================== açılış akışı ==================== */
 
@@ -293,12 +296,22 @@ function newWizard() {
   return {
     step: 1,
     p: {
-      name: "", customer: "", address: "", phone: "", theme: "", panelCount: "",
-      startDate: todayISO(), dueDate: ""
+      code: "", name: "", description: "", company: "", customer: "", contact: "", address: "",
+      theme: "", startDate: todayISO(), dueDate: "",
+      salesperson: "", designer3d: "", drafter: "", note: ""
     },
     sel: {},
     quoteId: "", quoteNo: ""
   };
+}
+
+// Proje kodu: 2-4 büyük harf, benzersiz. Hata metni döner, sorun yoksa "".
+function codeProblem(code, exceptId) {
+  const c = store.normalizeCode(code);
+  if (!c) return "Proje kodu gerekli — panellerin üzerine yazılan kısaltma (örn. AP, BP).";
+  if (!/^[A-ZÇĞİÖŞÜ]{2,4}$/.test(c)) return "Proje kodu 2-4 büyük harf olmalı (örn. AP, KP, MP).";
+  if (store.codeTaken(c, exceptId)) return "“" + c + "” kodu başka bir projede kullanılıyor.";
+  return "";
 }
 
 // Kabul edilen tekliften üretim projesi: sihirbaz müşteri bilgileriyle dolu açılır.
@@ -306,8 +319,9 @@ function startProjectFromQuote(q) {
   const c = q.customer || {};
   S.wizard = newWizard();
   S.wizard.p.name = q.title || c.company || quoteLabel(q);
-  S.wizard.p.customer = [c.company, c.contact].filter(Boolean).join(" — ");
-  S.wizard.p.phone = c.phone || "";
+  S.wizard.p.company = c.company || "";
+  S.wizard.p.customer = c.contact || "";
+  S.wizard.p.contact = [c.phone, c.email].filter(Boolean).join(" · ");
   S.wizard.p.address = [c.address, c.city].filter(Boolean).join(", ");
   S.wizard.quoteId = q.id;
   S.wizard.quoteNo = quoteLabel(q);
@@ -390,12 +404,15 @@ async function doMigrate() {
 async function createProjectNow() {
   const w = S.wizard;
   if (!w.p.name.trim()) { toast("Proje adı gerekli."); w.step = 1; render(); return; }
+  const cp = codeProblem(w.p.code);
+  if (cp) { toast(cp); w.step = 1; S.focusNext = "w-code"; render(); return; }
   const pid = uid(), now = new Date().toISOString();
   const picked = data.steps.filter(function (s) { return w.sel[s.id]; });
   const project = {
-    name: w.p.name.trim(), customer: w.p.customer, address: w.p.address, phone: w.p.phone,
-    theme: w.p.theme, panelCount: w.p.panelCount ? Number(w.p.panelCount) : null,
-    startDate: w.p.startDate || "", dueDate: w.p.dueDate || "",
+    code: store.normalizeCode(w.p.code), name: w.p.name.trim(), description: w.p.description || "",
+    company: w.p.company || "", customer: w.p.customer || "", contact: w.p.contact || "", address: w.p.address || "",
+    theme: w.p.theme || "", startDate: w.p.startDate || "", dueDate: w.p.dueDate || "",
+    salesperson: w.p.salesperson || "", designer3d: w.p.designer3d || "", drafter: w.p.drafter || "", note: w.p.note || "",
     status: "aktif", archived: false, createdAt: now, createdBy: myEmail(),
     quoteId: w.quoteId || "", quoteNo: w.quoteNo || ""
   };
@@ -532,17 +549,25 @@ function renderModal() {
     title = "Proje bilgileri";
     const p = byId(data.projects, m.id) || {};
     body = '<div class="form">' +
-      mf("name", "Proje adı", p.name, "text") + mf("theme", "Tema", p.theme, "text") +
-      mf("customer", "Müşteri / yetkili", p.customer, "text") + mf("phone", "Telefon", p.phone, "text") +
-      mf("panelCount", "Panel sayısı", p.panelCount, "number") +
+      '<div class="f"><label for="m-code">Proje kodu</label><input id="m-code" data-m="code" type="text" class="mono" maxlength="4" ' +
+        'style="text-transform:uppercase" value="' + esc(p.code || "") + '"></div>' +
+      mf("name", "Proje adı", p.name, "text") +
+      mf("company", "Cari unvan", p.company, "text") + mf("theme", "Tema", p.theme, "text") +
+      mf("customer", "Müşteri / yetkili", p.customer, "text") + mf("contact", "İletişim bilgileri", p.contact || p.phone, "text") +
       mf("startDate", "Başlangıç", p.startDate, "date") + mf("dueDate", "Teslim", p.dueDate, "date") +
+      mf("salesperson", "Sipariş alan", p.salesperson, "text") + mf("designer3d", "3D tasarım", p.designer3d, "text") +
+      mf("drafter", "Çizim ve takip", p.drafter, "text") +
       '<div class="f"><label for="m-status">Durum</label><select id="m-status" data-m="status">' +
       ["aktif", "beklemede", "tamam"].map(function (s) {
         return '<option value="' + s + '"' + ((p.status || "aktif") === s ? " selected" : "") + '>' +
           { aktif: "Aktif", beklemede: "Beklemede", tamam: "Tamamlandı" }[s] + '</option>';
       }).join("") + '</select></div>' +
+      '<div class="f full"><label for="m-description">Proje açıklaması</label>' +
+      '<textarea id="m-description" data-m="description">' + esc(p.description || "") + '</textarea></div>' +
       '<div class="f full"><label for="m-address">Teslimat adresi</label>' +
-      '<textarea id="m-address" data-m="address">' + esc(p.address || "") + '</textarea></div></div>';
+      '<textarea id="m-address" data-m="address">' + esc(p.address || "") + '</textarea></div>' +
+      '<div class="f full"><label for="m-note">Proje notu</label>' +
+      '<textarea id="m-note" data-m="note">' + esc(p.note || "") + '</textarea></div></div>';
   }
   else if (m.kind === "addsteps") {
     title = "Projeye adım ekle"; save = "Ekle";
@@ -725,10 +750,15 @@ async function saveModal() {
       }
     }
     else if (m.kind === "proj") {
+      const cp = codeProblem(val("code"), m.id);
+      if (cp) { toast(cp); return; }
+      if (!val("name").trim()) { toast("Proje adı gerekli."); return; }
       await guard(store.saveProject(m.id, {
-        name: val("name"), theme: val("theme"), customer: val("customer"), phone: val("phone"),
-        panelCount: val("panelCount") ? Number(val("panelCount")) : null,
-        startDate: val("startDate"), dueDate: val("dueDate"), status: val("status"), address: val("address")
+        code: store.normalizeCode(val("code")), name: val("name").trim(), theme: val("theme"),
+        company: val("company"), customer: val("customer"), contact: val("contact"),
+        salesperson: val("salesperson"), designer3d: val("designer3d"), drafter: val("drafter"),
+        startDate: val("startDate"), dueDate: val("dueDate"), status: val("status"),
+        description: val("description"), address: val("address"), note: val("note")
       }, "proje bilgileri güncellendi: " + val("name")));
       toast("Proje bilgileri güncellendi.");
     }
@@ -865,6 +895,16 @@ document.addEventListener("click", async function (e) {
     return;
   }
   if ((el = e.target.closest("[data-open-proj]"))) { openProject(el.getAttribute("data-open-proj")); return; }
+  if ((el = e.target.closest("[data-ptab]"))) { S.projTab = el.getAttribute("data-ptab"); render(); return; }
+  if ((el = e.target.closest("[data-accsave]"))) {
+    const pid = el.getAttribute("data-accsave");
+    const body = {};
+    document.querySelectorAll("#main [data-acc]").forEach(function (x) { body[x.getAttribute("data-acc")] = x.value; });
+    const p = byId(data.projects, pid);
+    await guard(store.saveAccounting(pid, body, "muhasebe bilgileri güncellendi: " + ((p && p.name) || pid)));
+    toast("Muhasebe bilgileri kaydedildi.");
+    return;
+  }
   if ((el = e.target.closest("[data-toggle]"))) { await toggleTask(el.getAttribute("data-toggle")); return; }
   if ((el = e.target.closest("[data-shortclose]"))) { await toggleTask(el.getAttribute("data-shortclose"), true); return; }
   if ((el = e.target.closest("[data-start]"))) {
@@ -881,7 +921,11 @@ document.addEventListener("click", async function (e) {
   /* sihirbaz */
   if ((el = e.target.closest("[data-wnext]"))) {
     const n = Number(el.getAttribute("data-wnext"));
-    if (n === 2 && !S.wizard.p.name.trim()) { toast("Önce proje adını yazın."); return; }
+    if (n === 2) {
+      const cp = codeProblem(S.wizard.p.code);
+      if (cp) { toast(cp); S.focusNext = "w-code"; render(); return; }
+      if (!S.wizard.p.name.trim()) { toast("Önce proje adını yazın."); return; }
+    }
     S.wizard.step = n; window.scrollTo(0, 0); render(); return;
   }
   if ((el = e.target.closest("[data-pick]"))) {
@@ -952,7 +996,12 @@ document.addEventListener("change", async function (e) {
 
   if (await QA.onChange(e)) return;
 
-  if (t.hasAttribute && t.hasAttribute("data-w")) { S.wizard.p[t.getAttribute("data-w")] = t.value; return; }
+  if (t.hasAttribute && t.hasAttribute("data-w")) {
+    const k = t.getAttribute("data-w");
+    S.wizard.p[k] = k === "code" ? store.normalizeCode(t.value) : t.value;
+    if (k === "code") t.value = S.wizard.p.code;
+    return;
+  }
 
   const wrow = t.closest ? t.closest("[data-wrow]") : null;
   if (wrow && t.hasAttribute("data-wf")) {
