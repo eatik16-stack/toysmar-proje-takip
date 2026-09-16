@@ -354,6 +354,12 @@ table.matrix td.cell{padding:0; width:26px; height:30px; text-align:center; bord
 .dcell{display:flex; flex-direction:column; gap:3px}
 .sec-sel{font-size:11.5px; padding:3px 6px}
 .sec-title{font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-soft); font-weight:600; margin:10px 0 0}
+.pcode{color:var(--accent-ink); font-weight:600; letter-spacing:.02em}
+.tabs{display:flex; gap:4px; border-bottom:1px solid var(--line); margin-bottom:-6px}
+.tabs button{background:none; border:0; border-bottom:2px solid transparent; padding:8px 12px; cursor:pointer; color:var(--ink-mid); font-weight:500; margin-bottom:-1px}
+.tabs button:hover{color:var(--ink)}
+.tabs button[aria-selected="true"]{color:var(--accent-ink); border-bottom-color:var(--accent); font-weight:600}
+.tabs .mono{font-size:11.5px; color:var(--ink-soft)}
 @media (max-width:900px){
   .trow,.thead-row{grid-template-columns:1fr 1fr; gap:8px}
   .thead-row{display:none}
