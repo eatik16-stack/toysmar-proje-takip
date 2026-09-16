@@ -6,10 +6,30 @@ import {
 } from "./util.js";
 import {
   data, projTasks, progress, activeProjects, deptName, personName, mePerson,
-  canEditTask, pendingRequests, jobs, isJob, activeProjectTasks
+  canEditTask, pendingRequests, jobs, isJob, activeProjectTasks,
+  sectionsOf, sectionName, peopleFor
 } from "./store.js";
 import { session, isAdmin, canPlan, canSee, myRole, myName, myEmail } from "./auth.js";
 import { ROLE_ORDER, roleDef, roleLabel } from "./roles.js";
+import { stepTypeLabel, CATALOG_VERSION, canonicalStepId } from "./seed.js";
+
+// Departman + bölüm etiketi: "Üretim Planlama · Metal".
+export function deptLabel(deptId, sectionId) {
+  const sn = sectionName(deptId, sectionId);
+  return deptName(deptId) + (sn ? " · " + sn : "");
+}
+
+// Departman seçicisinin altında, departmanın bölümü varsa bölüm seçicisi.
+function sectionSelect(attr, deptId, val, disabled) {
+  const list = sectionsOf(deptId);
+  if (!list.length) return "";
+  let h = '<select class="inp-sm sec-sel" ' + attr + '="section"' + (disabled ? " disabled" : "") +
+    ' aria-label="Bölüm"><option value="">Bölüm seçin</option>';
+  list.forEach(function (s) {
+    h += '<option value="' + esc(s.id) + '"' + (s.id === val ? " selected" : "") + '>' + esc(s.name) + '</option>';
+  });
+  return h + '</select>';
+}
 
 /* ================= ortak parçalar ================= */
 
@@ -83,6 +103,7 @@ export function taskRow(t) {
     (isJob(t) && plan ? ' <button class="linkish tedit" data-editjob="' + esc(t.id) + '">düzenle</button>' : '') + '</div>';
   const sub = [];
   if (t.urgent && !done) sub.push('<span class="tag tag-urgent">Acil</span>');
+  if (t.section && isJob(t)) sub.push('<span class="tag">' + esc(sectionName(t.dept, t.section)) + '</span>');
   if (t.spec) sub.push(esc(t.spec));
   if (t.orderStatus) sub.push('<span class="tag">' + esc(t.orderStatus) + '</span>');
   if (t.shortClosed) sub.push('<span class="tag tag-warn">eksik kapatıldı ' + made + '/' + need + '</span>');
@@ -95,10 +116,10 @@ export function taskRow(t) {
 
   h += '<div>' + (t.type === "qty" ? qtyCell(t, plan, mine, need, made) : '<span class="muted">—</span>') + '</div>';
 
-  h += '<div>' + selectEl("dept", t.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; }), !plan) + '</div>';
+  h += '<div class="dcell">' + selectEl("dept", t.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; }), !plan) +
+    sectionSelect("data-f", t.dept, t.section, !plan) + '</div>';
   h += '<div>' + selectEl("assignee", t.assignee,
-    data.people.filter(function (x) { return !t.dept || x.dept === t.dept; })
-      .map(function (x) { return { v: x.id, l: x.name }; }), !plan, "Atanmadı") + '</div>';
+    peopleFor(t.dept, t.section).map(function (x) { return { v: x.id, l: x.name }; }), !plan, "Atanmadı") + '</div>';
   h += '<div><input class="inp-sm inp-date" type="date" value="' + esc(t.dueDate || "") +
     '" data-f="dueDate" aria-label="Termin"' + (plan ? "" : " disabled") + '></div>';
 
@@ -160,7 +181,7 @@ export function meCardHtml() {
   return '<div class="mecard">' +
     (photo ? '<img class="avatar" src="' + esc(photo) + '" alt="">' : '<div class="avatar">' + esc(initials) + '</div>') +
     '<div class="who"><div class="nm">' + esc(nm) + '</div>' +
-    '<div class="rl">' + esc(role + (p && p.dept ? " · " + deptName(p.dept) : "")) + '</div></div>' +
+    '<div class="rl">' + esc(role + (p && p.dept ? " · " + deptLabel(p.dept, p.section) : "")) + '</div></div>' +
     '<button class="btn btn-sm btn-ghost" data-signout="1" title="Oturumu kapat">Çık</button></div>';
 }
 
@@ -176,14 +197,23 @@ export function viewSetup() {
   return '<div class="page-head"><div><h1>Kurulum</h1>' +
     '<div class="sub">Tek seferlik: katalog ve departmanlar yüklenecek</div></div></div>' +
     '<div class="panel"><div class="panel-body">' +
-    '<p style="max-width:64ch; margin:0 0 14px">Excel’deki 36 sütundan türetilmiş <strong>33 adımlık katalog</strong>, ' +
-    '5 grup ve 7 varsayılan departman yüklenecek. Kendinizi de personel listesine ekleyeceğim. ' +
-    'Sonrasında hepsini Ayarlar’dan değiştirebilirsiniz.</p>' +
+    '<p style="max-width:64ch; margin:0 0 14px">Toysmar’ın süreç adımlarından türetilmiş <strong>65 adımlık katalog</strong>, ' +
+    '9 departman (Üretim Planlama altında Metal, Kaplama, MDF, Dikiş bölümleri) yüklenecek. ' +
+    'Kendinizi de personel listesine ekleyeceğim. Sonrasında hepsini Ayarlar’dan değiştirebilirsiniz.</p>' +
     '<button class="btn btn-pri" data-doseed="1">Kataloğu yükle ve başla</button>' +
     '</div></div>';
 }
 
 /* ================= panel ================= */
+
+// Eski (sürüm 1) katalogla çalışan kurulumda yöneticiye geçiş hatırlatması.
+export function migrationBanner() {
+  if (!isAdmin() || !data.steps.length || data.catalogVersion >= CATALOG_VERSION) return "";
+  return '<div class="banner banner-warn"><span aria-hidden="true">!</span><div>' +
+    '<strong>Adım kataloğu eski sürümde.</strong>Departmanlar, bölümler ve 65 adımlık yeni katalog için ' +
+    '<button class="linkish" data-nav="ayarlar">Ayarlar</button> ekranından “Yeni kataloğa geç” deyin. ' +
+    'Mevcut projeler ve iş emirleri korunur.</div></div>';
+}
 
 // Açık / geciken / 7 gün içinde / acil sayımları — panelin iki yarısı ve sekme aynı hesabı kullanır.
 export function workStats(list) {
@@ -255,6 +285,8 @@ export function viewPanel(S) {
     (canSee("yeni") ? '<button class="btn" data-nav="yeni">Yeni proje</button>' : '') +
     (canPlan() ? '<button class="btn btn-pri" data-newjob="1">Proje dışı iş emri</button>' : '') +
     '</div></div>';
+
+  h += migrationBanner();
 
   h += '<div class="split">';
 
@@ -451,7 +483,7 @@ export function viewProjects(S) {
 
 function matrixView(list) {
   const used = {};
-  data.tasks.forEach(function (t) { used[t.stepId] = true; });
+  data.tasks.forEach(function (t) { used[canonicalStepId(t.stepId)] = true; });
   let cols = data.steps.filter(function (s) { return used[s.id]; });
   if (!cols.length) cols = data.steps.slice(0, 20);
 
@@ -470,7 +502,7 @@ function matrixView(list) {
   h += '</tr></thead><tbody>';
   list.forEach(function (p) {
     const map = {};
-    projTasks(p.id).forEach(function (t) { map[t.stepId] = t; });
+    projTasks(p.id).forEach(function (t) { map[canonicalStepId(t.stepId)] = t; });
     h += '<tr class="click' + (p.archived ? " is-arch" : "") + '" data-open-proj="' + esc(p.id) +
       '"><td class="sticky" title="' + esc(p.name) + '">' + esc(p.name) + '</td>';
     prevG = null;
@@ -531,13 +563,16 @@ export function viewProject(S) {
   } else {
     h += '<div class="thead-row"><span class="c-name">Adım</span><span>Gereken / Yapılan</span>' +
       '<span>Departman</span><span>Sorumlu</span><span>Termin</span><span>Durum</span></div>';
-    let prevG = null;
+    let prevK = null;
     ts.forEach(function (t) {
-      if (t.group !== prevG) {
+      const key = (t.group || "") + "|" + (t.section || "");
+      if (key !== prevK) {
         const g = byId(data.groups, t.group);
-        const cnt = ts.filter(function (x) { return x.group === t.group; }).length;
-        h += '<div class="gband"><span>' + esc(g ? g.label : t.group) + '</span><span class="n">' + cnt + '</span></div>';
-        prevG = t.group;
+        const cnt = ts.filter(function (x) { return ((x.group || "") + "|" + (x.section || "")) === key; }).length;
+        const sn = sectionName(t.dept, t.section);
+        h += '<div class="gband"><span>' + esc(g ? g.label : (t.group || "Diğer")) + (sn ? ' · ' + esc(sn) : '') +
+          '</span><span class="n">' + cnt + '</span></div>';
+        prevK = key;
       }
       h += taskRow(t);
     });
@@ -661,6 +696,13 @@ export function viewWizard(S) {
       '<span class="muted"><span class="mono">' + selCount + ' / ' + data.steps.length + '</span> adım seçildi</span></div><div class="panel-body">';
     h += '<p class="muted" style="margin:0 0 14px; max-width:64ch">Excel’de ✓ / X ile işaretlediğiniz alanlar. ' +
       'Seçtiğiniz her adım, bir sonraki ekranda iş emrine dönüşür.</p>';
+    const chip = function (s) {
+      const on2 = !!w.sel[s.id];
+      return '<button type="button" class="chip' + (on2 ? " on" : "") + '" data-pick="' + esc(s.id) + '">' +
+        '<span class="box" aria-hidden="true">' + (on2 ? "✓" : "") + '</span>' +
+        '<span><span class="nm">' + esc(s.name) + '</span>' +
+        '<span class="dp">' + esc(deptLabel(s.dept, s.section)) + ' · ' + esc(stepTypeLabel(s.type, s.unit)) + '</span></span></button>';
+    };
     data.groups.forEach(function (g) {
       const items = data.steps.filter(function (s) { return s.group === g.id; });
       if (!items.length) return;
@@ -668,15 +710,19 @@ export function viewWizard(S) {
       h += '<div class="gwrap"><div class="gtitle"><h3>' + esc(g.label) + '</h3>' +
         '<span class="c">' + on + '/' + items.length + '</span>' +
         '<button class="btn btn-sm btn-ghost" style="margin-left:auto" data-gall="' + esc(g.id) + '">' +
-        (on === items.length ? "Hiçbiri" : "Tümü") + '</button></div><div class="chips">';
-      items.forEach(function (s) {
-        const on2 = !!w.sel[s.id];
-        h += '<button type="button" class="chip' + (on2 ? " on" : "") + '" data-pick="' + esc(s.id) + '">' +
-          '<span class="box" aria-hidden="true">' + (on2 ? "✓" : "") + '</span>' +
-          '<span><span class="nm">' + esc(s.name) + '</span>' +
-          '<span class="dp">' + esc(deptName(s.dept)) + (s.type === "qty" ? " · adet girilir" : "") + '</span></span></button>';
-      });
-      h += '</div></div>';
+        (on === items.length ? "Hiçbiri" : "Tümü") + '</button></div>';
+      // Bölümlü departmanda (Üretim Planlama) adımlar bölüm başlıklarıyla ayrılır.
+      const secs = g.dept ? sectionsOf(g.dept) : [];
+      if (secs.length) {
+        secs.concat([{ id: "", name: "Genel" }]).forEach(function (sec) {
+          const sub = items.filter(function (s) { return (s.section || "") === sec.id; });
+          if (!sub.length) return;
+          h += '<div class="sec-title">' + esc(sec.name) + '</div><div class="chips">' + sub.map(chip).join("") + '</div>';
+        });
+      } else {
+        h += '<div class="chips">' + items.map(chip).join("") + '</div>';
+      }
+      h += '</div>';
     });
     return h + '</div><div class="modal-foot"><button class="btn" data-wnext="1">← Geri</button>' +
       '<button class="btn btn-pri" data-wnext="3"' + (selCount ? "" : " disabled") + '>Atamaya geç →</button></div></div>';
@@ -701,10 +747,10 @@ export function viewWizard(S) {
         ? '<input class="inp-sm mono" type="text" inputmode="decimal" data-wf="qty" value="' + esc(v.qty || "") +
           '" placeholder="' + esc(s.unit || "adet") + '" aria-label="Gereken adet">'
         : '<span class="muted">—</span>') + '</div>' +
-      '<div>' + selectW("dept", v.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; })) + '</div>' +
+      '<div class="dcell">' + selectW("dept", v.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; })) +
+        sectionSelect("data-wf", v.dept, v.section, false) + '</div>' +
       '<div>' + selectW("assignee", v.assignee,
-        data.people.filter(function (x) { return !v.dept || x.dept === v.dept; })
-          .map(function (x) { return { v: x.id, l: x.name }; }), "Atanmadı") + '</div>' +
+        peopleFor(v.dept, v.section).map(function (x) { return { v: x.id, l: x.name }; }), "Atanmadı") + '</div>' +
       '<div><input class="inp-sm inp-date" type="date" data-wf="dueDate" value="' + esc(v.dueDate || "") + '" aria-label="Termin"></div>' +
       '<div><input class="inp-sm" type="text" data-wf="spec" value="' + esc(v.spec || "") +
         '" placeholder="spesifikasyon" aria-label="Spesifikasyon"></div></div>';
@@ -826,6 +872,19 @@ export function viewSettings(S) {
   let h = '<div class="page-head"><div><h1>Ayarlar</h1>' +
     '<div class="sub">Personel, giriş yetkileri, departmanlar ve adım kataloğu</div></div></div>';
 
+  if (data.steps.length && data.catalogVersion < CATALOG_VERSION) {
+    const armed = S.confirm === "migrate:v2";
+    h += '<div class="panel"><div class="panel-head"><h2>Yeni adım kataloğu (sürüm 2)</h2></div><div class="panel-body">' +
+      '<p style="max-width:70ch; margin:0 0 10px">Katalog Toysmar’ın gerçek süreç adımlarına göre yeniden kuruldu: ' +
+      '9 departman, Üretim Planlama altında Metal / Kaplama / MDF / Dikiş bölümleri, 65 adım ve dosya / metin tipinde adımlar. ' +
+      'Geçişte mevcut adım kataloğu yenisiyle değişir; personel, giriş yetkileri ve açık iş emirleri eski departmandan yeni departman ve bölüme taşınır. ' +
+      'Projeler ve iş emirleri silinmez, tamamlanmış işler olduğu gibi kalır.</p>' +
+      '<p class="muted" style="margin:0 0 12px; font-size:12.5px">Metal, Kaplama, MDF → Üretim Planlama bölümleri · Çizim / Tasarım → Tasarım · ' +
+      'diğer departmanlar aynı kalır, sizin eklediğiniz departmanlar korunur.</p>' +
+      '<button class="btn ' + (armed ? "btn-danger" : "btn-pri") + '" data-confirm="migrate:v2">' +
+      (armed ? "Emin misiniz? Geçişi başlat" : "Yeni kataloğa geç") + '</button></div></div>';
+  }
+
   h += '<div class="grid2"><div style="display:flex; flex-direction:column; gap:16px">';
 
   /* personel */
@@ -839,7 +898,7 @@ export function viewSettings(S) {
     h += '<div class="list-line"><div class="g">' +
       '<div style="font-weight:600; font-size:13px">' + esc(p.name) +
         (mem ? ' <span class="tag">' + esc(roleLabel(mem.role)) + '</span>' : '') + '</div>' +
-      '<div class="muted" style="font-size:11.5px">' + esc(deptName(p.dept)) + ' · ' + open + ' açık iş' +
+      '<div class="muted" style="font-size:11.5px">' + esc(deptLabel(p.dept, p.section)) + ' · ' + open + ' açık iş' +
         (p.email ? ' · ' + esc(p.email) : ' · e-posta yok') + '</div></div>' +
       '<button class="btn btn-sm btn-ghost" data-editperson="' + esc(p.id) + '">Düzenle</button>' +
       delBtn(S, p.id, "Sil", "delperson") + '</div>';
@@ -868,7 +927,9 @@ export function viewSettings(S) {
     '<button class="btn btn-sm" data-adddept="1">Ekle</button></div><div class="panel-body">';
   data.depts.forEach(function (d) {
     const load = data.tasks.filter(function (t) { return t.dept === d.id && t.status !== "tamam"; }).length;
-    h += '<div class="list-line"><div class="g"><div style="font-weight:600; font-size:13px">' + esc(d.name) + '</div>' +
+    const secs = sectionsOf(d.id).map(function (s) { return s.name; }).join(", ");
+    h += '<div class="list-line"><div class="g"><div style="font-weight:600; font-size:13px">' + esc(d.name) +
+      (secs ? ' <span class="muted" style="font-weight:400; font-size:12px">— ' + esc(secs) + '</span>' : '') + '</div>' +
       '<div class="muted" style="font-size:11.5px">' +
       data.people.filter(function (p) { return p.dept === d.id; }).length + ' kişi · ' + load + ' açık iş</div></div>' +
       delBtn(S, d.id, "Sil", "deldept") + '</div>';
@@ -886,8 +947,8 @@ export function viewSettings(S) {
     h += '<div class="panel-body" style="padding:4px 14px">';
     items.forEach(function (s) {
       h += '<div class="list-line"><div class="g"><div style="font-weight:600; font-size:13px">' + esc(s.name) + '</div>' +
-        '<div class="muted" style="font-size:11.5px">' + esc(deptName(s.dept)) +
-        (s.type === "qty" ? ' · ' + esc(s.unit || "adet") : ' · tamamlandı işareti') + '</div></div>' +
+        '<div class="muted" style="font-size:11.5px">' + esc(deptLabel(s.dept, s.section)) +
+        ' · ' + esc(stepTypeLabel(s.type, s.unit)) + '</div></div>' +
         '<select class="inp-sm" style="width:120px" data-stepdept="' + esc(s.id) + '">' +
         data.depts.map(function (d) {
           return '<option value="' + esc(d.id) + '"' + (d.id === s.dept ? " selected" : "") + '>' + esc(d.name) + '</option>';
