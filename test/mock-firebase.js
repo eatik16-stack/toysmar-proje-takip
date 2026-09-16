@@ -243,8 +243,12 @@
             window.__MOCK_WRITES__.push([o[0], o[1]]);
           });
           persist();
+          // Gerçek SDK gibi: toplu yazma hem belge hem koleksiyon dinleyicilerini tetikler.
           const cols = {};
-          ops.forEach(function (o) { cols[o[1].split("/")[0]] = true; });
+          ops.forEach(function (o) {
+            cols[o[1].split("/")[0]] = true;
+            docListeners.filter(function (l) { return l.path === o[1]; }).forEach(function (l) { l.cb(docSnap(o[1])); });
+          });
           Object.keys(cols).forEach(function (c) {
             colListeners.filter(function (l) { return l.col === c; }).forEach(function (l) { l.cb(colSnap(c)); });
           });
