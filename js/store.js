@@ -5,9 +5,12 @@
 import { fb } from "./fb.js";
 import { myEmail, myName, myRole, isAdmin, canPlan, canSell } from "./auth.js";
 import { uid } from "./util.js";
+import { CATALOG_VERSION, DEFAULT_SECTIONS, LEGACY_DEPT_MAP } from "./seed.js";
 
 export const data = {
   groups: [], steps: [],          // config/catalog
+  sections: {},                   // config/catalog.sections — departman → bölümler
+  catalogVersion: 0,              // config/catalog.version (0: yüklenmemiş, 1: eski, 2: güncel)
   depts: [],  people: [],         // config/org
   members: [],                    // allowed/*  (giriş yetkisi olanlar)
   requests: [],                   // requests/* (bekleyen erişim talepleri)
@@ -46,6 +49,8 @@ export async function subscribeAll(onChange, onError) {
     const d = (s.exists() && s.data()) || {};
     data.steps = Array.isArray(d.steps) ? d.steps.slice() : [];
     data.groups = Array.isArray(d.groups) ? d.groups.slice() : [];
+    data.sections = (d.sections && typeof d.sections === "object") ? d.sections : {};
+    data.catalogVersion = data.steps.length ? (Number(d.version) || 1) : 0;
     data.loaded.catalog = true; onChange();
   }, fail("katalog")));
 
@@ -215,12 +220,80 @@ export async function saveOrg(departments, people, logText) {
   if (logText) writeLog("ayar", "config/org", logText);
 }
 
-export async function saveCatalog(groups, steps, logText) {
+export async function saveCatalog(groups, steps, logText, sections) {
   const f = await fb();
   await f.setDoc(f.doc(f.db, "config", "catalog"), {
-    groups: groups, steps: steps, updatedAt: new Date().toISOString()
+    groups: groups, steps: steps,
+    sections: sections || data.sections || {},
+    version: sections ? CATALOG_VERSION : (data.catalogVersion || 1),
+    updatedAt: new Date().toISOString()
   });
   if (logText) writeLog("ayar", "config/catalog", logText);
+}
+
+// Sürüm 1 → 2 geçişi: yeni katalog ve departmanlar yazılır; personel, giriş
+// yetkileri ve açık iş emirleri eski departmandan yeni departman + bölüme taşınır.
+// Adım kimlikleri iş emirlerinde değişmez (seed.js LEGACY_STEP_MAP ekranda eşler).
+export function migrationPlan(newDepts, newSteps) {
+  const known = {}; newDepts.forEach(function (d) { known[d.id] = true; });
+  const extraDepts = data.depts.filter(function (d) { return !known[d.id] && !LEGACY_DEPT_MAP[d.id]; });
+  const move = function (deptId) {
+    const m = LEGACY_DEPT_MAP[deptId];
+    return m ? m : { dept: deptId, section: "" };
+  };
+  const people = data.people.map(function (p) {
+    const m = move(p.dept);
+    return Object.assign({}, p, { dept: m.dept, section: p.section || m.section || "" });
+  });
+  const members = data.members.filter(function (m) { return LEGACY_DEPT_MAP[m.dept]; }).map(function (m) {
+    const mv = move(m.dept);
+    return { id: m.id, patch: { dept: mv.dept, section: m.section || mv.section || "" } };
+  });
+  const tasks = data.tasks.filter(function (t) { return LEGACY_DEPT_MAP[t.dept]; }).map(function (t) {
+    const mv = move(t.dept);
+    return { id: t.id, patch: { dept: mv.dept, section: t.section || mv.section || "" } };
+  });
+  return {
+    depts: newDepts.concat(extraDepts), extraDepts: extraDepts, people: people, members: members, tasks: tasks,
+    steps: newSteps, oldSteps: data.steps.length, movedPeople: people.filter(function (p, i) { return p.dept !== data.people[i].dept; }).length
+  };
+}
+
+export async function migrateToV2(plan, groups, sections) {
+  const f = await fb();
+  const batch = f.writeBatch(f.db);
+  batch.set(f.doc(f.db, "config", "catalog"), {
+    groups: groups, steps: plan.steps, sections: sections, version: CATALOG_VERSION,
+    updatedAt: new Date().toISOString()
+  });
+  batch.set(f.doc(f.db, "config", "org"), {
+    departments: plan.depts, people: plan.people, updatedAt: new Date().toISOString()
+  });
+  plan.members.forEach(function (m) { batch.update(f.doc(f.db, "allowed", m.id), m.patch); });
+  plan.tasks.forEach(function (t) { batch.update(f.doc(f.db, "tasks", t.id), t.patch); });
+  await batch.commit();
+  writeLog("ayar", "config/catalog", "katalog sürüm 2'ye geçti: " + plan.steps.length + " adım, " +
+    plan.depts.length + " departman; " + plan.people.length + " personel, " + plan.tasks.length + " iş emri taşındı");
+}
+
+export function sectionsOf(deptId) {
+  const list = (data.sections || {})[deptId];
+  return Array.isArray(list) ? list : [];
+}
+
+export function sectionName(deptId, sectionId) {
+  if (!sectionId) return "";
+  const s = sectionsOf(deptId).filter(function (x) { return x.id === sectionId; })[0];
+  return s ? s.name : sectionId;
+}
+
+// Kişinin (dept, section) çiftine göre atanabilecek personel.
+export function peopleFor(deptId, sectionId) {
+  return data.people.filter(function (p) {
+    if (deptId && p.dept !== deptId) return false;
+    if (sectionId && p.section && p.section !== sectionId) return false;
+    return true;
+  });
 }
 
 export async function saveMember(email, body) {
@@ -274,6 +347,7 @@ export async function approveRequest(req, role, dept) {
     name: req.name || person.name,
     role: role,
     dept: person.dept || "",
+    section: person.section || "",
     personId: person.id
   });
   await f.updateDoc(f.doc(f.db, "requests", key), {
