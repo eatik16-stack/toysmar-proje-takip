@@ -7,9 +7,9 @@ import {
 import {
   data, projTasks, progress, activeProjects, deptName, personName, mePerson,
   canEditTask, pendingRequests, jobs, isJob, activeProjectTasks,
-  sectionsOf, sectionName, peopleFor
+  sectionsOf, sectionName, peopleFor, accountingOf
 } from "./store.js";
-import { session, isAdmin, canPlan, canSee, myRole, myName, myEmail } from "./auth.js";
+import { session, isAdmin, canPlan, canSee, canAccount, myRole, myName, myEmail } from "./auth.js";
 import { ROLE_ORDER, roleDef, roleLabel } from "./roles.js";
 import { stepTypeLabel, CATALOG_VERSION, canonicalStepId } from "./seed.js";
 
@@ -456,18 +456,18 @@ export function viewProjects(S) {
   if (S.projView === "matris") return h + matrixView(list);
 
   h += '<div class="panel"><div class="tw"><table><thead><tr>' +
-    '<th>Proje</th><th>Müşteri</th><th>Panel</th><th>Tema</th><th>Teslim</th><th>İlerleme</th><th>Adım</th>' +
+    '<th>Kod</th><th>Proje</th><th>Müşteri</th><th>Tema</th><th>Teslim</th><th>İlerleme</th><th>Adım</th>' +
     (canPlan() ? '<th></th>' : '') + '</tr></thead><tbody>';
   list.sort(function (a, b) {
     return String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999"));
   }).forEach(function (p) {
     const pr = progress(p.id), d = daysBetween(p.dueDate);
     h += '<tr class="click' + (p.archived ? " is-arch" : "") + '" data-open-proj="' + esc(p.id) + '">' +
+      '<td class="mono">' + esc(p.code || "—") + '</td>' +
       '<td class="t-name">' + esc(p.name) +
         (p.archived ? ' <span class="tag tag-arch">arşiv</span>' : '') +
         (p.status === "tamam" ? ' <span class="st st-tamam">Bitti</span>' : '') + '</td>' +
-      '<td class="muted">' + esc(String(p.customer || "—").slice(0, 40)) + '</td>' +
-      '<td class="mono">' + (p.panelCount || "—") + '</td>' +
+      '<td class="muted">' + esc(String(p.customer || p.company || "—").slice(0, 40)) + '</td>' +
       '<td class="muted">' + esc(p.theme || "—") + '</td>' +
       '<td class="mono">' + fmtDate(p.dueDate) +
         (d !== null && d < 0 && p.status !== "tamam" && !p.archived ? ' <span style="color:var(--late)">geç</span>' : '') + '</td>' +
@@ -525,13 +525,18 @@ export function viewProject(S) {
   const ts = projTasks(p.id), pr = progress(p.id), d = daysBetween(p.dueDate);
   const plan = canPlan();
 
+  const tab = S.projTab || "isler";
+
   let h = '<div class="page-head"><div>' +
     '<button class="btn btn-sm btn-ghost" data-nav="projeler" style="margin-bottom:6px">← Projeler</button>' +
-    '<h1>' + esc(p.name) + (p.archived ? ' <span class="tag tag-arch">arşiv</span>' : '') + '</h1>' +
-    '<div class="sub">' + esc(p.customer || "Müşteri bilgisi girilmemiş") + '</div></div>' +
+    '<h1>' + (p.code ? '<span class="mono pcode">' + esc(p.code) + '</span> ' : '') + esc(p.name) +
+      (p.archived ? ' <span class="tag tag-arch">arşiv</span>' : '') +
+      (p.status === "tamam" ? ' <span class="st st-tamam">Bitti</span>' : '') + '</h1>' +
+    '<div class="sub">' + esc([p.theme, p.company || p.customer].filter(Boolean).join(" · ") || "Müşteri bilgisi girilmemiş") +
+      ' · ' + esc(fmtDate(p.startDate)) + ' → ' + esc(fmtDate(p.dueDate)) + '</div></div>' +
     '<div class="row-actions">' +
     (plan ? '<button class="btn btn-sm" data-edit-proj="1">Proje bilgileri</button>' : '') +
-    (plan ? '<button class="btn btn-sm" data-add-steps="1">Adım ekle</button>' : '') +
+    (plan ? '<button class="btn btn-sm" data-add-steps="1">Adım / kalem ekle</button>' : '') +
     (plan ? '<button class="btn btn-sm" data-arch="' + esc(p.id) + '">' + (p.archived ? "Arşivden çıkar" : "Arşivle") + '</button>' : '') +
     (isAdmin() && p.archived ? delBtn(S, p.id, "Kalıcı sil", "delproj") : '') +
     '</div></div>';
@@ -547,14 +552,24 @@ export function viewProject(S) {
       fmtDate(p.dueDate), d !== null && d < 0 ? "alert" : (d !== null && d <= 7 ? "warn" : "")) + '</div>';
 
   h += '<div class="panel"><div class="panel-body" style="display:flex; gap:22px; flex-wrap:wrap">' +
-    meta("Tema", p.theme) + meta("Panel sayısı", p.panelCount) + meta("Telefon", p.phone) +
-    meta("Başlangıç", fmtDate(p.startDate)) + meta("Teslim", fmtDate(p.dueDate)) +
-    meta("Adres", p.address) +
+    meta("Cari unvan", p.company) + meta("Müşteri / yetkili", p.customer) + meta("İletişim", p.contact || p.phone) +
+    meta("Sipariş alan", p.salesperson) + meta("3D tasarım", p.designer3d) + meta("Çizim ve takip", p.drafter) +
+    meta("Adres", p.address) + meta("Açıklama", p.description) + meta("Not", p.note) +
     (p.quoteNo ? '<div style="min-width:110px"><div class="eyebrow">Teklif</div><div style="font-size:13.5px; margin-top:2px">' +
       (canSee("teklifler") && p.quoteId
         ? '<button class="linkish mono" style="font-size:13.5px" data-qopen="' + esc(p.quoteId) + '">' + esc(p.quoteNo) + '</button>'
         : '<span class="mono">' + esc(p.quoteNo) + '</span>') + '</div></div>' : '') +
     '</div></div>';
+
+  // Sekmeler: iş emirleri herkese; muhasebe yalnızca yönetici ve muhasebe rolüne.
+  const tabs = [{ id: "isler", label: "İş emirleri", n: ts.length }];
+  if (canAccount()) tabs.push({ id: "muhasebe", label: "Muhasebe" });
+  h += '<div class="tabs" role="tablist">' + tabs.map(function (x) {
+    return '<button role="tab" aria-selected="' + (tab === x.id) + '" data-ptab="' + x.id + '">' + esc(x.label) +
+      (x.n ? ' <span class="mono">' + x.n + '</span>' : '') + '</button>';
+  }).join("") + '</div>';
+
+  if (tab === "muhasebe" && canAccount()) return h + accountingTab(S, p);
 
   h += '<div class="panel"><div class="panel-head"><h2>İş emirleri</h2>' +
     '<span class="muted"><span class="mono">' + ts.length + '</span> adım</span></div>';
@@ -578,6 +593,29 @@ export function viewProject(S) {
     });
   }
   return h + '</div>';
+}
+
+// Muhasebe sekmesi: proje seviyesinde tutar, ödeme ve nakliye/montaj bilgileri.
+// Veri ayrı koleksiyonda (accounting/<pid>); yalnızca yönetici ve muhasebe okur.
+function accountingTab(S, p) {
+  const a = accountingOf(p.id);
+  const inc = function (key, label) {
+    const v = a[key] || "";
+    return '<div class="f"><label for="acc-' + key + '">' + esc(label) + '</label><select id="acc-' + key + '" data-acc="' + key + '">' +
+      '<option value=""' + (v === "" ? " selected" : "") + '>Belirtilmedi</option>' +
+      '<option value="dahil"' + (v === "dahil" ? " selected" : "") + '>Teklife dahil</option>' +
+      '<option value="haric"' + (v === "haric" ? " selected" : "") + '>Hariç — alıcıya ait</option></select></div>';
+  };
+  return '<div class="panel"><div class="panel-head"><h2>Muhasebe</h2>' +
+    (a.updatedAt ? '<span class="muted" style="font-size:12px">son güncelleme ' + esc(fmtDateTime(a.updatedAt)) + '</span>' : '') + '</div>' +
+    '<div class="panel-body"><div class="form">' +
+    '<div class="f"><label for="acc-total">Genel toplam (₺)</label><input id="acc-total" data-acc="total" type="text" inputmode="decimal" class="mono" value="' + esc(a.total) + '" placeholder="0"></div>' +
+    '<div class="f"><label for="acc-balance">Müşteri borç / alacak (₺)</label><input id="acc-balance" data-acc="balance" type="text" inputmode="decimal" class="mono" value="' + esc(a.balance) + '" placeholder="eksi: alacaklı"></div>' +
+    inc("shippingIncluded", "Nakliye") + inc("installIncluded", "Montaj") +
+    '<div class="f full"><label for="acc-shippingNote">Nakliye / montaj notu</label><input id="acc-shippingNote" data-acc="shippingNote" type="text" value="' + esc(a.shippingNote) + '" placeholder="örn. gümrük dahil, nakliye alıcıya ait"></div>' +
+    '<div class="f full"><label for="acc-paymentDetail">Ödeme detayı</label><textarea id="acc-paymentDetail" data-acc="paymentDetail" placeholder="ön ödeme, çek/senet tarihleri…">' + esc(a.paymentDetail) + '</textarea></div>' +
+    '<div class="f full"><label for="acc-discussedDetail">Konuşulan detay</label><textarea id="acc-discussedDetail" data-acc="discussedDetail">' + esc(a.discussedDetail) + '</textarea></div>' +
+    '</div></div><div class="modal-foot"><button class="btn btn-pri" data-accsave="' + esc(p.id) + '">Muhasebe bilgilerini kaydet</button></div></div>';
 }
 
 /* ================= işlerim ================= */
@@ -678,15 +716,26 @@ export function viewWizard(S) {
   if (w.step === 1) {
     return h + '<div class="panel"><div class="panel-head"><h2>1 · Proje bilgileri</h2></div><div class="panel-body">' +
       '<div class="form">' +
+      '<div class="f"><label for="w-code">Proje kodu *</label>' +
+      '<input id="w-code" type="text" data-w="code" class="mono" value="' + esc(w.p.code) + '" placeholder="AP, BP, KP…" maxlength="4" ' +
+      'style="text-transform:uppercase" autocomplete="off"></div>' +
       fld("name", "Proje adı", w.p.name, "text", "örn. Ahmetli Belediyesi", true) +
+      fld("company", "Cari unvan", w.p.company, "text", "Fatura kesilecek firma") +
       fld("theme", "Tema", w.p.theme, "text", "ORMAN / SOFT / DENİZ") +
       fld("customer", "Müşteri / teslimat yetkilisi", w.p.customer, "text", "") +
-      fld("phone", "Telefon", w.p.phone, "text", "0500 000 00 00") +
-      fld("panelCount", "Panel sayısı", w.p.panelCount, "number", "") +
+      fld("contact", "İletişim bilgileri", w.p.contact, "text", "0500 000 00 00 · e-posta") +
       fld("startDate", "Başlangıç", w.p.startDate, "date", "") +
       fld("dueDate", "Teslim tarihi", w.p.dueDate, "date", "") +
+      fld("salesperson", "Sipariş alan", w.p.salesperson, "text", "") +
+      fld("designer3d", "3D tasarım", w.p.designer3d, "text", "") +
+      fld("drafter", "Çizim ve takip", w.p.drafter, "text", "") +
+      '<div class="f"><span class="muted" style="font-size:12px; display:block; padding-top:20px">Panel sayısı Metal ve Kaplama iş emirlerinde gereken / yapılan adet olarak tutulur.</span></div>' +
+      '<div class="f full"><label for="w-description">Proje açıklaması</label>' +
+      '<textarea id="w-description" data-w="description" placeholder="örn. Softplay oyun parkı + trambolin, ilave tadilat">' + esc(w.p.description) + '</textarea></div>' +
       '<div class="f full"><label for="w-address">Teslimat adresi</label>' +
       '<textarea id="w-address" data-w="address" placeholder="Mahalle, cadde, no, ilçe/il">' + esc(w.p.address) + '</textarea></div>' +
+      '<div class="f full"><label for="w-note">Proje notu</label>' +
+      '<textarea id="w-note" data-w="note" placeholder="Sahada dikkat edilecekler, eksikler…">' + esc(w.p.note) + '</textarea></div>' +
       '</div></div><div class="modal-foot">' +
       '<button class="btn btn-pri" data-wnext="2">İçerik seçimine geç →</button></div></div>';
   }
