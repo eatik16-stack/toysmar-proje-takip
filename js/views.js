@@ -12,6 +12,24 @@ import {
 import { session, isAdmin, canPlan, canSee, canAccount, myRole, myName, myEmail } from "./auth.js";
 import { ROLE_ORDER, roleDef, roleLabel } from "./roles.js";
 import { stepTypeLabel, CATALOG_VERSION, canonicalStepId } from "./seed.js";
+import { filesOf, projectFiles, fmtSize } from "./files.js";
+
+// İş emrinin dosyaları + yükleme bağlantısı. "file" tipinde dosya zorunlu,
+// diğer tiplerde isteğe bağlıdır; ekranda aynı parça kullanılır.
+function attachHtml(t, canEdit) {
+  const list = filesOf(t.id);
+  let h = '<div class="att">';
+  list.slice(0, 3).forEach(function (f) {
+    h += '<a href="' + esc(f.url) + '" target="_blank" rel="noopener" title="' + esc(f.uploadedByName || "") + '">📎 ' + esc(f.name) + '</a>';
+  });
+  if (list.length > 3) h += '<span class="cnt">+' + (list.length - 3) + ' dosya daha</span>';
+  if (t.type === "file" && !list.length) h += '<span class="cnt">' + (canEdit ? "dosya bekleniyor" : "dosya yok") + '</span>';
+  if (canEdit) {
+    h += '<label class="up">' + (t.type === "file" ? "dosya yükle" : "dosya ekle") +
+      '<input type="file" data-upload="' + esc(t.id) + '" accept=".jpg,.jpeg,.png,.pdf,.dwg,.dxf,.skp"></label>';
+  }
+  return h + '</div>';
+}
 
 // Departman + bölüm etiketi: "Üretim Planlama · Metal".
 export function deptLabel(deptId, sectionId) {
@@ -112,9 +130,16 @@ export function taskRow(t) {
   if (done && t.completedAt)
     sub.push("✓ " + fmtDate(String(t.completedAt).slice(0, 10)) + (t.completedByName ? " · " + esc(t.completedByName) : ""));
   if (sub.length) h += '<div class="tspec">' + sub.join(" · ") + '</div>';
+  // Dosya tipinde olmayan adımlara da isteğe bağlı dosya eklenebilir.
+  if (t.type !== "file" && (plan || mine || filesOf(t.id).length)) h += attachHtml(t, plan || mine);
   h += '</div>';
 
-  h += '<div>' + (t.type === "qty" ? qtyCell(t, plan, mine, need, made) : '<span class="muted">—</span>') + '</div>';
+  if (t.type === "qty") h += '<div>' + qtyCell(t, plan, mine, need, made) + '</div>';
+  else if (t.type === "file") h += '<div>' + attachHtml(t, plan || mine) + '</div>';
+  else if (t.type === "text") {
+    h += '<div class="tcell"><input class="inp-sm" type="text" data-f="text" value="' + esc(t.text || "") +
+      '" placeholder="metin girin" aria-label="Metin"' + ((plan || mine) ? "" : " disabled") + '></div>';
+  } else h += '<div><span class="muted">—</span></div>';
 
   h += '<div class="dcell">' + selectEl("dept", t.dept, data.depts.map(function (d) { return { v: d.id, l: d.name }; }), !plan) +
     sectionSelect("data-f", t.dept, t.section, !plan) + '</div>';
@@ -124,9 +149,15 @@ export function taskRow(t) {
     '" data-f="dueDate" aria-label="Termin"' + (plan ? "" : " disabled") + '></div>';
 
   const canToggle = plan || mine;
+  const needsFile = t.type === "file" && !filesOf(t.id).length;
+  const needsText = t.type === "text" && !String(t.text || "").trim();
   h += '<div class="c-act">';
   if (!canToggle) h += '<span class="st st-' + st + '">' + esc(stateLabel(st)) + '</span>';
   else if (done) h += '<button class="btn btn-sm" data-toggle="' + esc(t.id) + '">Geri al</button>';
+  else if (needsFile || needsText) {
+    h += '<button class="btn btn-sm btn-block" data-toggle="' + esc(t.id) + '" title="' +
+      (needsFile ? "Önce dosya yükleyin" : "Önce metni girin") + '">Tamamla</button>';
+  }
   else if (short > 0) {
     h += '<button class="btn btn-sm btn-block" data-toggle="' + esc(t.id) + '" title="' +
       esc(need + " " + (t.unit || "adet") + " gerekiyor, " + made + " girildi") + '">Tamamla</button>';
@@ -561,15 +592,17 @@ export function viewProject(S) {
         : '<span class="mono">' + esc(p.quoteNo) + '</span>') + '</div></div>' : '') +
     '</div></div>';
 
-  // Sekmeler: iş emirleri herkese; muhasebe yalnızca yönetici ve muhasebe rolüne.
+  // Sekmeler: iş emirleri ve dosyalar herkese; muhasebe yalnızca yönetici ve muhasebe rolüne.
   const tabs = [{ id: "isler", label: "İş emirleri", n: ts.length }];
   if (canAccount()) tabs.push({ id: "muhasebe", label: "Muhasebe" });
+  tabs.push({ id: "dosyalar", label: "Dosyalar", n: projectFiles(p.id).length });
   h += '<div class="tabs" role="tablist">' + tabs.map(function (x) {
     return '<button role="tab" aria-selected="' + (tab === x.id) + '" data-ptab="' + x.id + '">' + esc(x.label) +
       (x.n ? ' <span class="mono">' + x.n + '</span>' : '') + '</button>';
   }).join("") + '</div>';
 
   if (tab === "muhasebe" && canAccount()) return h + accountingTab(S, p);
+  if (tab === "dosyalar") return h + filesTab(S, p, ts);
 
   h += '<div class="panel"><div class="panel-head"><h2>İş emirleri</h2>' +
     '<span class="muted"><span class="mono">' + ts.length + '</span> adım</span></div>';
@@ -592,6 +625,35 @@ export function viewProject(S) {
       h += taskRow(t);
     });
   }
+  return h + '</div>';
+}
+
+// Dosyalar sekmesi: projedeki tüm dosyalar, adıma göre gruplu. Bir yıl sonra
+// sözleşme, 3D görsel ya da montaj fotoğrafı buradan bulunur.
+function filesTab(S, p, ts) {
+  const all = projectFiles(p.id, !!S.showArchivedFiles);
+  const plan = canPlan();
+  let h = '<div class="panel"><div class="panel-head"><h2>Dosyalar</h2><div class="row-actions">' +
+    '<span class="muted mono">' + all.length + '</span>' +
+    '<button class="btn btn-sm ' + (S.showArchivedFiles ? "btn-pri" : "btn-ghost") + '" data-filesarch="1">Arşivdekiler</button></div></div>';
+  if (!all.length) {
+    return h + '<div class="empty"><h3>Dosya yok</h3><p>İş emri satırındaki “dosya ekle / dosya yükle” ile yüklenen dosyalar burada toplanır.</p></div></div>';
+  }
+  const byTask = {};
+  all.forEach(function (f) { (byTask[f.taskId] = byTask[f.taskId] || []).push(f); });
+  ts.forEach(function (t) { if (byTask[t.id]) byTask[t.id]._task = t; });
+  Object.keys(byTask).forEach(function (tid) {
+    const list = byTask[tid], t = list._task;
+    h += '<div class="gband"><span>' + esc(t ? t.name : (list[0].taskName || "İş emri")) + '</span><span class="n">' + list.length + '</span></div>';
+    list.forEach(function (f) {
+      h += '<div class="fline' + (f.archived ? " done" : "") + '"><div class="fn"><a href="' + esc(f.url) + '" target="_blank" rel="noopener">📎 ' + esc(f.name) + '</a>' +
+        (f.archived ? ' <span class="tag tag-arch">arşiv</span>' : '') + '</div>' +
+        '<div class="muted">' + esc(fmtSize(f.size)) + '</div>' +
+        '<div class="muted">' + esc(f.uploadedByName || f.uploadedBy || "") + ' · ' + esc(fmtDate(String(f.uploadedAt || "").slice(0, 10))) + '</div>' +
+        '<div style="text-align:right">' + (plan ? '<button class="btn btn-sm btn-ghost" data-filearch="' + esc(f.id) + '" data-on="' + (f.archived ? "0" : "1") + '">' +
+          (f.archived ? "Geri al" : "Arşive al") + '</button>' : '') + '</div></div>';
+    });
+  });
   return h + '</div>';
 }
 
