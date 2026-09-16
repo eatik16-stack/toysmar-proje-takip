@@ -134,13 +134,41 @@ bilgilerini ve teklif koşullarını yükler. Fiyatlar elle girilir.
   açılır, proje ile teklif birbirine bağlanır.
 - Aynı teklif başka bir oturumda değiştirilirse düzenleyen kişi uyarılır.
 
+**Fiyat listesi kaynağı.** Ürünler ve perakende fiyatlar "Toysmar Takip - 2026"
+Google Sheet'inde ("28/07 GÜNCEL.." sayfası) tutulur. Sayfanın yanında çalışan
+Apps Script köprüsü (`tools/fiyat-koprusu.gs`) `GET <url>?key=<anahtar>` ile
+yalnızca kod, ad, ebat, perakende fiyat ve grubu JSON olarak verir; toptan fiyat,
+maliyet ve kur sayfada kalır, uygulamaya hiç inmez.
+
+- Köprü adresi ve anahtarı `sales/source` belgesinde durur; kurallarda yalnızca
+  **yönetici** okur ve yazar. Anahtar tarayıcıya iner (istemci tarafı uygulama) —
+  bilinen sınır; anahtar yalnızca perakende listesine erişim verir, sayfanın
+  kendisine değil.
+- Yönetici Teklif ayarları → **Fiyat listesini güncelle** der. Gelen liste mevcut
+  katalogla **kod** üzerinden karşılaştırılır ve onay penceresinde özetlenir:
+  yeni ürünler, fiyatı değişenler (eski → yeni, % fark), adı/ebadı değişenler,
+  listeden düşenler ve sayfadaki veri uyarıları. Onaylanınca katalog **tek
+  yazma işlemiyle** güncellenir ve günlüğe yazılır. Değişiklik yoksa "Katalog
+  güncel" denir, yazılmaz.
+- Listeden düşen ürün silinmez, **pasif** olur: seçicide çıkmaz, eski tekliflerde
+  kalem olarak durur. Elle eklenen ürünlere (`source: "manuel"`) dokunulmaz.
+- Yinelenen kodlar `-2`, `-3` eki alır ve özette listelenir; kalıcı çözüm sayfada.
+  Fiyatı 0 gelen ürün "fiyat girilmedi" etiketiyle gelir, seçilince fiyat elle girilir.
+- Teklif ekranında seçici grup → ürün olarak açılır; kutuya yazınca kod, ad ve
+  ebatta arar. Seçilen ürünün liste fiyatı kaleme **kopyalanır**, ebat açıklamaya
+  düşer. Katalog sonra değişse de teklifteki kalem değişmez (test edilir).
+- Katalog tek belgede (`sales/catalog`) tutulur: bir okuma, atomik yazma;
+  1 MB belge sınırı yazmadan önce ölçülür (400 ürün ≈ 100 KB).
+
 **Ayarlar** (Teklifler → Teklif ayarları): şirket ve banka bilgileri, kaşe/imza
 görseli, yeni teklif varsayılanları, koşullar ve ürün kataloğu. Kaşe/imza görseli
 depoda değil, yalnızca yetkili girişle okunan Firestore'da durur. Metinlerde
 `{musteri}`, `{yetkili}`, `{gecerlilik}`, `{gun}` yer tutucuları kullanılabilir.
 
 Firestore'da: `quotes` (teklifler), `quoteFiles` (teklif görselleri),
-`sales/settings`, `sales/catalog`, `sales/counter` (yıllık numara sayacı).
+`sales/settings`, `sales/catalog` (ürünler + son içe aktarma bilgisi),
+`sales/source` (köprü adresi ve anahtarı, yalnızca yönetici), `sales/counter`
+(yıllık numara sayacı).
 
 ## Adet kuralı
 
@@ -185,7 +213,13 @@ açma ve zorunlu alanlar, departmana göre sorumlu listesi, pencere açıkken ge
 veri güncellemesinin yazılanı silmemesi, süzgeçler ve arama, adet kuralı,
 düzenleme, panelin iki yarısının ayrı metrikleri, İşlerim ve silme.
 
-Teklif modülünün senaryosu `test/quote-scenario.mjs` içindedir. İki senaryo da
+Fiyat listesi senaryosu `test/price-scenario.mjs` içindedir: kaynak kaydı, ilk
+içe aktarma ve gruplar, yinelenen kod eki, fiyatsız ürün, değişiklik yoksa
+yazmama, hata mesajları, ikinci içe aktarmada yalnızca değişenlerin yazılması,
+listeden düşenin pasife alınması, elle eklenenin korunması, seçicide arama ve
+teklif kaleminin fiyatının katalog güncellense de değişmemesi.
+
+Teklif modülünün senaryosu `test/quote-scenario.mjs` içindedir. Üç senaryo da
 sürücüden bağımsızdır: `run.mjs` onları Playwright ile çağırır; Node olmayan bir
 makinede aynı dosyalar tarayıcı konsolunda DOM sürücüsüyle koşturulabilir.
 Teklif senaryosunun kapsadığı konular:
@@ -222,14 +256,16 @@ teklif modülünü kurar.
 
 ## Revize akışı
 
-Tek kaynak bu depo.
+Tek kaynak bu depo. Değişiklik Claude'a yazılır; gerisi otomatiktir.
 
-1. Değişiklik Claude'a yazılır.
-2. Claude dosyaları düzenler ve akışları sahte Firebase ile tarayıcıda koşar —
-   testler geçmeden teslim edilmez.
-3. Claude değişen dosyaları klasör yapısıyla zip olarak verir; github.com'da
-   **Add file → Upload files** ile yüklenir (Claude'un GitHub bağlantısı yazamıyor).
-4. Claude depodaki dosya özetlerini (hash) yerel kopyayla karşılaştırıp yüklemeyi
-   doğrular; GitHub Pages birkaç dakika içinde yayına alır.
-5. `firestore.rules` değiştiyse içeriği Firebase Console → Firestore → Rules'a
-   yapıştırılıp **Publish** edilir.
+1. Claude depoyu çeker (`git pull`) — başkasının yaptığı değişikliğin üzerine yazılmaz.
+2. Dosyaları düzenler, davranış değiştiyse testini de ekler, commit atıp `main`'e push'lar.
+3. GitHub Actions (`.github/workflows/yayin.yml`) sırayla çalışır:
+   - **test** — `node test/run.mjs`. Bir test kalırsa hiçbir şey yayına çıkmaz.
+   - **kurallar** — `firestore.rules` değiştiyse Firebase'e yayınlanır; derlenemezse durur.
+   - **site** — `index.html`, `assets/`, `js/` GitHub Pages'e çıkar (`test/` yayınlanmaz).
+4. Claude çalışmanın sonucunu izler, canlı sitenin yeni sürümü sunduğunu doğrular
+   ve sonucu bildirir. Kalan test ya da hata varsa düzeltip tekrar gönderir.
+
+Tek seferlik kurulum: bu makinede git ve GitHub oturumu, depoda Pages kaynağının
+“GitHub Actions” olması ve `FIREBASE_SERVICE_ACCOUNT` gizli anahtarı.

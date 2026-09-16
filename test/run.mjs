@@ -34,7 +34,10 @@ const server = http.createServer(function (req, res) {
 });
 await new Promise(function (r) { server.listen(4173, r); });
 
-const browser = await chromium.launch({ executablePath: "/opt/pw-browsers/chromium" });
+// Önceden kurulmuş Chromium varsa (inceleme ortamı) o kullanılır; yoksa Playwright'ın
+// kendi indirdiği tarayıcı (GitHub Actions: npx playwright install chromium).
+const PRESET_CHROMIUM = process.env.PW_CHROMIUM || "/opt/pw-browsers/chromium";
+const browser = await chromium.launch(fs.existsSync(PRESET_CHROMIUM) ? { executablePath: PRESET_CHROMIUM } : {});
 const errors = [];
 let pass = 0, fail = 0;
 
@@ -339,6 +342,18 @@ nav = await txt("#nav");
 ok("personel Proje Dışı İşler sekmesini görüyor", nav.includes("Proje Dışı İşler"), nav);
 await page.click('[data-nav="projedisi"]'); await page.waitForTimeout(400);
 ok("personel proje dışı iş emri açamıyor", (await page.locator("[data-newjob]").count()) === 0);
+
+console.log("\n18) Fiyat listesi (Google Sheet köprüsü)");
+await page.evaluate(() => localStorage.setItem("toysmar.view", "teklifler"));
+await page.goto("http://localhost:4173/test/index.html");
+await page.waitForTimeout(900);
+const { priceScenario } = await import("./price-scenario.mjs");
+await priceScenario(driver);
+await page.evaluate(() => localStorage.setItem("toysmar.view", "teklif-ayar"));
+await page.goto("http://localhost:4173/test/index.html?as=satis@toysmar.test");
+await page.waitForTimeout(900);
+ok("satış rolünde fiyat listesi kaynağı paneli yok", (await page.locator("#src-url").count()) === 0 && (await txt("h1")) === "Teklif ayarları", await txt("h1"));
+ok("satış listeden gelen ürünleri görüyor", (await txt("#main")).includes("Trambolin 305"));
 
 console.log("\nJS hataları: " + (errors.length ? errors.slice(0, 3).join(" | ") : "yok"));
 if (errors.length) fail++;

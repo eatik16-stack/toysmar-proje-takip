@@ -129,8 +129,13 @@ service cloud.firestore {
                    && (isAdmin() || !exists(quoteRef(doc)) || isDraft(get(quoteRef(doc)).data));
     }
     // Teklif ayarları, ürün kataloğu ve teklif numarası sayacı.
+    // "source" (fiyat listesi köprüsünün adresi ve anahtarı) bu kapsamın dışında:
+    // onu yalnızca yönetici okur ve yazar.
     match /sales/{doc} {
-      allow read, write: if canSell();
+      allow read, write: if canSell() && doc != 'source';
+    }
+    match /sales/source {
+      allow read, write: if isAdmin();
     }
 
     // --- değişiklik günlüğü ---------------------------------------------
