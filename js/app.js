@@ -17,7 +17,7 @@ import * as QV from "./quote-views.js";
 import * as QA from "./quote-app.js";
 import { linkProject, quoteLabel } from "./quotes.js";
 import { ROLE_ORDER, roleDef } from "./roles.js";
-import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS } from "./seed.js";
+import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS, DEFAULT_SECTIONS, STEP_TYPES } from "./seed.js";
 
 const S = {
   view: lsGet("toysmar.view") || "panel",
@@ -372,10 +372,19 @@ async function guard(promise) {
 
 async function doSeed() {
   const me = myEmail();
-  const person = { id: uid(), name: myName(), dept: DEFAULT_DEPTS[0].id, email: me };
-  await guard(store.saveCatalog(DEFAULT_GROUPS, DEFAULT_STEPS, "başlangıç kataloğu yüklendi (33 adım)"));
+  // Kurulumu yapan yönetici Üretim Planlama'ya yazılır; Ayarlar'dan değiştirilir.
+  const person = { id: uid(), name: myName(), dept: "d-uretim", section: "", email: me };
+  await guard(store.saveCatalog(DEFAULT_GROUPS, DEFAULT_STEPS,
+    "başlangıç kataloğu yüklendi (" + DEFAULT_STEPS.length + " adım, sürüm 2)", DEFAULT_SECTIONS));
   await guard(store.saveOrg(DEFAULT_DEPTS, [person], "varsayılan departmanlar ve ilk personel kaydı"));
   toast("Katalog yüklendi. Ayarlar’dan personeli ekleyebilirsiniz.");
+}
+
+async function doMigrate() {
+  const plan = store.migrationPlan(DEFAULT_DEPTS, DEFAULT_STEPS);
+  await guard(store.migrateToV2(plan, DEFAULT_GROUPS, DEFAULT_SECTIONS));
+  toast("Yeni katalog yüklendi: " + plan.steps.length + " adım · " + plan.people.length + " personel ve " +
+    plan.tasks.length + " iş emri yeni departmanlara taşındı.");
 }
 
 async function createProjectNow() {
@@ -395,7 +404,7 @@ async function createProjectNow() {
     return {
       id: uid(), projectId: pid, stepId: s.id, name: s.name, group: s.group,
       type: s.type || "check", unit: s.unit || "",
-      dept: v.dept || s.dept || "", assignee: v.assignee || "",
+      dept: v.dept || s.dept || "", section: v.section || s.section || "", assignee: v.assignee || "",
       qty: v.qty || "", doneQty: "", shortClosed: false,
       spec: v.spec || "", orderStatus: "", note: "",
       dueDate: v.dueDate || w.p.dueDate || "", status: "bekliyor",
@@ -424,7 +433,7 @@ async function addStepsNow(pid, ids) {
     if (!s) return null;
     return {
       id: uid(), projectId: pid, stepId: s.id, name: s.name, group: s.group,
-      type: s.type || "check", unit: s.unit || "", dept: s.dept || "", assignee: "",
+      type: s.type || "check", unit: s.unit || "", dept: s.dept || "", section: s.section || "", assignee: "",
       qty: "", doneQty: "", shortClosed: false, spec: "", orderStatus: "", note: "",
       dueDate: (p && p.dueDate) || "", status: "bekliyor",
       completedAt: "", completedBy: "", completedByName: "",
@@ -461,7 +470,8 @@ async function runConfirmed(key) {
 
   if (kind.charAt(0) === "q" && await QA.confirmed(kind, id)) { S.qRebuild = true; render(); return; }
 
-  if (kind === "deljob") {
+  if (kind === "migrate") { await doMigrate(); }
+  else if (kind === "deljob") {
     const t = byId(data.tasks, id);
     await guard(store.deleteTask(id, t && t.name));
     S.modal = null;
@@ -566,6 +576,7 @@ function renderModal() {
       data.depts.map(function (d) {
         return '<option value="' + esc(d.id) + '"' + (p && p.dept === d.id ? " selected" : "") + '>' + esc(d.name) + '</option>';
       }).join("") + '</select></div>' +
+      sectionField(p ? p.dept : (data.depts[0] || {}).id, p ? p.section : "") +
       mf("email", "E-posta", p ? p.email : "", "email") +
       '<div class="f"><label for="m-role">Uygulama yetkisi</label><select id="m-role" data-m="role">' +
       '<option value="">Giremez</option>' +
@@ -604,7 +615,8 @@ function renderModal() {
         '<div class="f full"><label for="m-spec">Açıklama</label><textarea id="m-spec" data-m="spec" placeholder="Ne yapılacak, ölçü, malzeme…"></textarea></div>' +
         '<div class="f"><label for="m-dept">Departman *</label><select id="m-dept" data-m="dept">' +
         data.depts.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>'; }).join("") + '</select></div>' +
-        '<div class="f"><label for="m-assignee">Sorumlu</label><select id="m-assignee" data-m="assignee">' + assigneeOptions(d0, "") + '</select></div>' +
+        sectionField(d0, "") +
+        '<div class="f"><label for="m-assignee">Sorumlu</label><select id="m-assignee" data-m="assignee">' + assigneeOptions(d0, "", "") + '</select></div>' +
         mf("dueDate", "Termin", "", "date") +
         '<div class="f"><label for="m-type">Takip</label><select id="m-type" data-m="type">' +
         '<option value="check">Tamamlandı işareti</option><option value="qty">Adet girilir</option></select></div>' +
@@ -630,8 +642,9 @@ function renderModal() {
       '<div class="f"><label for="m-dept">Departman</label><select id="m-dept" data-m="dept">' +
       data.depts.map(function (d) { return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>'; }).join("") +
       '</select></div>' +
+      sectionField((data.depts[0] || {}).id, "") +
       '<div class="f"><label for="m-type">Tip</label><select id="m-type" data-m="type">' +
-      '<option value="check">Tamamlandı işareti</option><option value="qty">Adet girilir</option></select></div>' +
+      STEP_TYPES.map(function (t) { return '<option value="' + t.v + '">' + esc(t.l) + '</option>'; }).join("") + '</select></div>' +
       '<div class="f"><label for="m-unit">Birim</label><input id="m-unit" data-m="unit" type="text" placeholder="adet / ton / m²"></div></div>';
   }
 
@@ -643,11 +656,33 @@ function renderModal() {
     '<button class="btn btn-pri" data-msave="1">' + esc(save) + '</button></div></div></div>';
 }
 
-function assigneeOptions(deptId, selected) {
-  return '<option value="">Atanmadı — departmanın işi</option>' +
-    data.people.filter(function (p) { return !deptId || p.dept === deptId; }).map(function (p) {
+function assigneeOptions(deptId, sectionId, selected) {
+  return '<option value="">Atanmadı — ' + (sectionId ? "bölümün" : "departmanın") + ' işi</option>' +
+    store.peopleFor(deptId, sectionId).map(function (p) {
       return '<option value="' + esc(p.id) + '"' + (p.id === selected ? " selected" : "") + '>' + esc(p.name) + '</option>';
     }).join("");
+}
+
+// Pencerelerdeki bölüm alanı: departmanın bölümü yoksa gizli durur.
+function sectionField(deptId, selected) {
+  return '<div class="f" id="m-section-wrap"' + (store.sectionsOf(deptId).length ? '' : ' hidden') + '>' +
+    '<label for="m-section">Bölüm</label><select id="m-section" data-m="section">' + sectionOptions(deptId, selected) + '</select></div>';
+}
+
+function sectionOptions(deptId, selected) {
+  return '<option value="">Bölüm seçin</option>' + store.sectionsOf(deptId).map(function (s) {
+    return '<option value="' + esc(s.id) + '"' + (s.id === selected ? " selected" : "") + '>' + esc(s.name) + '</option>';
+  }).join("");
+}
+
+// Penceredeki departman değişince bölüm ve sorumlu listeleri o departmana göre yenilenir.
+function refreshModalDept() {
+  const dept = (document.getElementById("m-dept") || {}).value || "";
+  const wrap = document.getElementById("m-section-wrap"), sec = document.getElementById("m-section");
+  if (sec) { sec.innerHTML = sectionOptions(dept, ""); }
+  if (wrap) wrap.hidden = !store.sectionsOf(dept).length;
+  const a = document.getElementById("m-assignee");
+  if (a) a.innerHTML = assigneeOptions(dept, "", "");
 }
 
 function mf(key, label, val, type) {
@@ -679,7 +714,7 @@ async function saveModal() {
         const job = {
           id: uid(), projectId: "", stepId: "", group: "", name: name, spec: val("spec").trim(),
           type: type, unit: type === "qty" ? (val("unit").trim() || "adet") : "",
-          dept: val("dept"), assignee: val("assignee"),
+          dept: val("dept"), section: val("section"), assignee: val("assignee"),
           qty: type === "qty" ? val("qty").trim() : "", doneQty: "", shortClosed: false,
           orderStatus: "", note: "", dueDate: val("dueDate"), status: "bekliyor", urgent: urgent,
           completedAt: "", completedBy: "", completedByName: "",
@@ -714,17 +749,17 @@ async function saveModal() {
         const old = byId(people, pid);
         prevEmail = String((old && old.email) || "").toLowerCase();
         people = people.map(function (x) {
-          return x.id === pid ? { id: pid, name: name, dept: val("dept"), email: email } : x;
+          return x.id === pid ? { id: pid, name: name, dept: val("dept"), section: val("section"), email: email } : x;
         });
       } else {
         pid = uid();
-        people = people.concat([{ id: pid, name: name, dept: val("dept"), email: email }]);
+        people = people.concat([{ id: pid, name: name, dept: val("dept"), section: val("section"), email: email }]);
       }
       await guard(store.saveOrg(data.depts, people, (m.id ? "personel güncellendi: " : "personel eklendi: ") + name));
 
       if (prevEmail && prevEmail !== email) await guard(store.removeMember(prevEmail));
       if (email && role) await guard(store.saveMember(email, {
-        name: name, role: role, dept: val("dept"), personId: pid
+        name: name, role: role, dept: val("dept"), section: val("section"), personId: pid
       }));
       else if (email && !role) {
         const existing = data.members.filter(function (x) { return String(x.id).toLowerCase() === email; })[0];
@@ -743,10 +778,10 @@ async function saveModal() {
       if (!sn) { toast("Adım adı gerekli."); return; }
       let maxo = 0;
       data.steps.forEach(function (s) { if ((s.order || 0) > maxo) maxo = s.order || 0; });
-      await guard(store.saveCatalog(data.groups, data.steps.concat([{
-        id: uid(), name: sn, group: val("group") || (data.groups[0] || {}).id,
-        dept: val("dept"), type: val("type") || "check", unit: val("unit"), order: maxo + 1
-      }]), "kataloğa eklendi: " + sn));
+      const st = { id: uid(), name: sn, group: val("group") || (data.groups[0] || {}).id,
+        dept: val("dept"), section: val("section"), type: val("type") || "check", unit: val("unit"), order: maxo + 1 };
+      if (st.type === "file") st.requiresFile = true;
+      await guard(store.saveCatalog(data.groups, data.steps.concat([st]), "kataloğa eklendi: " + sn));
       toast("“" + sn + "” kataloğa eklendi.");
     }
   } catch (e) {
@@ -854,7 +889,7 @@ document.addEventListener("click", async function (e) {
     if (w.sel[sid]) delete w.sel[sid];
     else {
       const st = byId(data.steps, sid);
-      w.sel[sid] = { dept: st ? st.dept : "", assignee: "", qty: "", spec: "", dueDate: "" };
+      w.sel[sid] = { dept: st ? st.dept : "", section: st ? (st.section || "") : "", assignee: "", qty: "", spec: "", dueDate: "" };
     }
     render(); return;
   }
@@ -864,7 +899,7 @@ document.addEventListener("click", async function (e) {
     const allOn = items.every(function (s) { return w.sel[s.id]; });
     items.forEach(function (s) {
       if (allOn) delete w.sel[s.id];
-      else if (!w.sel[s.id]) w.sel[s.id] = { dept: s.dept, assignee: "", qty: "", spec: "", dueDate: "" };
+      else if (!w.sel[s.id]) w.sel[s.id] = { dept: s.dept, section: s.section || "", assignee: "", qty: "", spec: "", dueDate: "" };
     });
     render(); return;
   }
@@ -903,10 +938,11 @@ document.addEventListener("change", async function (e) {
   const t = e.target;
 
   if (t.id === "job-dept") { S.jobDept = t.value; render(); return; }
-  // İş emri penceresi: departman değişince sorumlu listesi o departmanın kişileri olur.
-  if (S.modal && S.modal.kind === "job" && t.id === "m-dept") {
+  // Pencerelerde departman değişince bölüm ve sorumlu listeleri o departmana göre yenilenir.
+  if (S.modal && t.id === "m-dept") { refreshModalDept(); return; }
+  if (S.modal && t.id === "m-section") {
     const a = document.getElementById("m-assignee");
-    if (a) a.innerHTML = assigneeOptions(t.value, "");
+    if (a) a.innerHTML = assigneeOptions((document.getElementById("m-dept") || {}).value || "", t.value, "");
     return;
   }
   if (S.modal && S.modal.kind === "job" && t.id === "m-type") {
@@ -922,7 +958,8 @@ document.addEventListener("change", async function (e) {
   if (wrow && t.hasAttribute("data-wf")) {
     const sid = wrow.getAttribute("data-wrow"), f = t.getAttribute("data-wf");
     S.wizard.sel[sid][f] = t.value;
-    if (f === "dept") { S.wizard.sel[sid].assignee = ""; render(); }
+    if (f === "dept") { S.wizard.sel[sid].section = ""; S.wizard.sel[sid].assignee = ""; render(); }
+    else if (f === "section") { S.wizard.sel[sid].assignee = ""; render(); }
     return;
   }
 
@@ -932,7 +969,11 @@ document.addEventListener("change", async function (e) {
     const task = byId(data.tasks, tid); if (!task) return;
     let patch;
     if (f === "qty" || f === "doneQty") patch = qtyPatch(task, f, t.value);
-    else { patch = {}; patch[f] = t.value; if (f === "dept") patch.assignee = ""; }
+    else {
+      patch = {}; patch[f] = t.value;
+      if (f === "dept") { patch.section = ""; patch.assignee = ""; }
+      if (f === "section") patch.assignee = "";
+    }
     await guard(store.saveTask(tid, patch, task.name + " · " + f + " = " + t.value));
     return;
   }
