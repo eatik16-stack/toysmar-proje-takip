@@ -11,8 +11,9 @@ import {
 } from "./store.js";
 import { session, isAdmin, canPlan, canSee, canAccount, myRole, myName, myEmail } from "./auth.js";
 import { ROLE_ORDER, roleDef, roleLabel } from "./roles.js";
-import { stepTypeLabel, CATALOG_VERSION, canonicalStepId } from "./seed.js";
+import { stepTypeLabel, CATALOG_VERSION, canonicalStepId, ORDER_STATUS, orderStatusLabel } from "./seed.js";
 import { filesOf, projectFiles, fmtSize } from "./files.js";
+import { lockReasons, isPurchase, missingMaterials } from "./locks.js";
 
 // İş emrinin dosyaları + yükleme bağlantısı. "file" tipinde dosya zorunlu,
 // diğer tiplerde isteğe bağlıdır; ekranda aynı parça kullanılır.
@@ -128,13 +129,21 @@ export function taskRow(t) {
       (t.openedBy === myEmail() ? "açtınız — " + esc(deptName(t.dept)) + " kapatır" : "açan: " + esc(t.openedByName || t.openedBy)) + '</span>');
   }
   if (t.spec) sub.push(esc(t.spec));
-  if (t.orderStatus) sub.push('<span class="tag">' + esc(t.orderStatus) + '</span>');
+  if (t.supplier) sub.push('<span class="muted">' + esc(t.supplier) + '</span>');
+  if (t.orderStatus) sub.push('<span class="tag">' + esc(orderStatusLabel(t.orderStatus)) + '</span>');
   if (t.shortClosed) sub.push('<span class="tag tag-warn">eksik kapatıldı ' + made + '/' + need + '</span>');
   else if (!done && short > 0 && made > 0)
     sub.push('<span class="tag tag-warn">' + made + '/' + need + ' — ' + short + ' ' + esc(t.unit || "adet") + ' eksik</span>');
+  if (t.lockOverride && done) sub.push('<span class="tag tag-warn" title="' + esc(t.lockOverrideNote || "") + '">kilit aşıldı</span>');
   if (done && t.completedAt)
     sub.push("✓ " + fmtDate(String(t.completedAt).slice(0, 10)) + (t.completedByName ? " · " + esc(t.completedByName) : ""));
   if (sub.length) h += '<div class="tspec">' + sub.join(" · ") + '</div>';
+  // Kilitli adım (Malzemeler geldi, Sevkiyat, Montaj): bekleyen koşullar liste halinde.
+  const locks = done ? [] : lockReasons(t);
+  if (locks.length) {
+    h += '<div class="tspec lock">Bekleyen: ' + locks.slice(0, 6).map(esc).join(" · ") +
+      (locks.length > 6 ? ' · +' + (locks.length - 6) + ' koşul' : '') + '</div>';
+  }
   // Dosya tipinde olmayan adımlara da isteğe bağlı dosya eklenebilir.
   if (t.type !== "file" && (plan || mine || filesOf(t.id).length)) h += attachHtml(t, plan || mine);
   h += '</div>';
@@ -153,12 +162,26 @@ export function taskRow(t) {
   h += '<div><input class="inp-sm inp-date" type="date" value="' + esc(t.dueDate || "") +
     '" data-f="dueDate" aria-label="Termin"' + (plan ? "" : " disabled") + '></div>';
 
-  const canToggle = plan || mine;
+  h += '<div class="c-act">' + taskActions(t) + '</div></div>';
+  return h;
+}
+
+// Satırın sağındaki eylem: durum rozeti, Geri al, Tamamla (kilitli / dosya-metin
+// bekleyen / eksik adetli hallerde engelli), Eksik kapat, Kilidi aş.
+function taskActions(t) {
+  const plan = canPlan(), mine = canEditTask(t), done = t.status === "tamam", st = taskState(t);
+  const need = needOf(t), made = doneOf(t), short = shortOf(t);
   const needsFile = t.type === "file" && !filesOf(t.id).length;
   const needsText = t.type === "text" && !String(t.text || "").trim();
-  h += '<div class="c-act">';
-  if (!canToggle) h += '<span class="st st-' + st + '">' + esc(stateLabel(st)) + '</span>';
+  const locks = done ? [] : lockReasons(t);
+  let h = "";
+  if (!(plan || mine)) h += '<span class="st st-' + st + '">' + esc(stateLabel(st)) + '</span>';
   else if (done) h += '<button class="btn btn-sm" data-toggle="' + esc(t.id) + '">Geri al</button>';
+  else if (locks.length) {
+    h += '<button class="btn btn-sm btn-block" data-toggle="' + esc(t.id) + '" title="' +
+      esc("Önce: " + locks.join(", ")) + '">Tamamla</button>';
+    if (isAdmin()) h += '<button class="btn btn-sm btn-ghost btn-xs" data-override="' + esc(t.id) + '" title="Yönetici: koşullar sağlanmadan kapat, etiketlenir">Kilidi aş</button>';
+  }
   else if (needsFile || needsText) {
     h += '<button class="btn btn-sm btn-block" data-toggle="' + esc(t.id) + '" title="' +
       (needsFile ? "Önce dosya yükleyin" : "Önce metni girin") + '">Tamamla</button>';
@@ -168,8 +191,34 @@ export function taskRow(t) {
       esc(need + " " + (t.unit || "adet") + " gerekiyor, " + made + " girildi") + '">Tamamla</button>';
     if (plan) h += '<button class="btn btn-sm btn-ghost btn-xs" data-shortclose="' + esc(t.id) + '">Eksik kapat</button>';
   } else h += '<button class="btn btn-sm btn-pri" data-toggle="' + esc(t.id) + '">Tamamla</button>';
-  h += '</div></div>';
   return h;
+}
+
+// Satın alma kalemleri tek tabloda: kalem · gereken / gelen · özellik ·
+// tedarikçi · sipariş durumu · termin · durum. Satırlar data-task taşır;
+// alanlar iş emri satırlarıyla aynı olay yoluyla (data-f) kaydedilir.
+function purchaseTable(items) {
+  const plan = canPlan();
+  let h = '<div class="tw"><table class="purchase"><thead><tr><th>Kalem</th><th>Gereken / Gelen</th><th>Özellik</th>' +
+    '<th>Tedarikçi</th><th>Sipariş durumu</th><th>Termin</th><th>Durum</th></tr></thead><tbody>';
+  items.forEach(function (t) {
+    const mine = canEditTask(t), ed = plan || mine, done = t.status === "tamam";
+    const need = needOf(t), made = doneOf(t);
+    const notes = [];
+    if (t.shortClosed) notes.push('<span class="tag tag-warn">eksik kapatıldı ' + made + '/' + need + '</span>');
+    if (t.lockOverride && done) notes.push('<span class="tag tag-warn">kilit aşıldı</span>');
+    if (done && t.completedAt) notes.push("✓ " + fmtDate(String(t.completedAt).slice(0, 10)) + (t.completedByName ? " · " + esc(t.completedByName) : ""));
+    h += '<tr class="' + (done ? "done" : "") + '" data-task="' + esc(t.id) + '">' +
+      '<td class="t-name"><span class="tn">' + esc(t.name) + '</span>' + (notes.length ? '<div class="tspec">' + notes.join(" · ") + '</div>' : '') +
+        ((plan || mine || filesOf(t.id).length) ? attachHtml(t, plan || mine) : '') + '</td>' +
+      '<td style="min-width:132px">' + qtyCell(t, plan, mine, need, made) + '</td>' +
+      '<td><input class="inp-sm" type="text" data-f="spec" value="' + esc(t.spec || "") + '" placeholder="renk / model" aria-label="Özellik"' + (ed ? "" : " disabled") + '></td>' +
+      '<td><input class="inp-sm" type="text" data-f="supplier" value="' + esc(t.supplier || "") + '" placeholder="tedarikçi" aria-label="Tedarikçi"' + (ed ? "" : " disabled") + '></td>' +
+      '<td>' + selectEl("orderStatus", t.orderStatus || "", ORDER_STATUS.map(function (o) { return { v: o.v, l: o.l }; }), !ed, "—") + '</td>' +
+      '<td><input class="inp-sm inp-date" type="date" value="' + esc(t.dueDate || "") + '" data-f="dueDate" aria-label="Termin"' + (plan ? "" : " disabled") + '></td>' +
+      '<td><div class="c-act">' + taskActions(t) + '</div></td></tr>';
+  });
+  return h + '</tbody></table></div>';
 }
 
 /* ================= kabuk ================= */
@@ -315,6 +364,8 @@ export function viewPanel(S) {
   const P = workStats(activeProjectTasks());
   const J = workStats(jobs());
   const pAtt = attentionOf(P.all), jAtt = attentionOf(J.all);
+  // Eksik malzeme: aktif projelerde sipariş durumu "geldi" olmayan satın alma kalemleri.
+  const missing = missingMaterials(P.all);
 
   let h = '<div class="page-head"><div><h1>Panel</h1><div class="sub">' +
     fmtDate(todayISO()) + ' · proje işleri ve proje dışı işler</div></div><div class="row-actions">' +
@@ -333,7 +384,7 @@ export function viewPanel(S) {
     kpi(P.open.length, "Açık iş", P.done + " / " + P.all.length + " bitti", "") +
     kpi(P.late.length, "Geciken", P.late.length ? "Termini geçti" : "Gecikme yok", P.late.length ? "alert" : "") +
     kpi(P.soon.length, "7 gün içinde", "Termini yaklaşan", P.soon.length ? "warn" : "") +
-    kpi(active.length, "Aktif proje", visibleProjects().length + " proje kayıtlı", "") + '</div>' +
+    kpi(missing.length, "Eksik malzeme", missing.length ? "Gelmemiş satın alma kalemi" : "Tüm kalemler geldi", missing.length ? "warn" : "") + '</div>' +
     '<div class="panel"><div class="panel-head"><h2>Dikkat gerektiren</h2><span class="muted mono">' + pAtt.length + '</span></div>' +
     attentionTable(pAtt, false) + '</div></section>';
 
@@ -621,6 +672,7 @@ export function viewProject(S) {
     let prevK = null;
     ts.forEach(function (t) {
       const key = (t.group || "") + "|" + (t.section || "");
+      const purchase = isPurchase(t) && t.group === "satinalma";
       if (key !== prevK) {
         const g = byId(data.groups, t.group);
         const cnt = ts.filter(function (x) { return ((x.group || "") + "|" + (x.section || "")) === key; }).length;
@@ -628,7 +680,10 @@ export function viewProject(S) {
         h += '<div class="gband"><span>' + esc(g ? g.label : (t.group || "Diğer")) + (sn ? ' · ' + esc(sn) : '') +
           '</span><span class="n">' + cnt + '</span></div>';
         prevK = key;
+        // Satın alma kalemleri satır satır değil, tek tabloda.
+        if (purchase) h += purchaseTable(ts.filter(function (x) { return isPurchase(x) && x.group === "satinalma"; }));
       }
+      if (purchase) return;
       h += taskRow(t);
     });
   }
@@ -814,6 +869,16 @@ export function viewWizard(S) {
       '<span class="muted"><span class="mono">' + selCount + ' / ' + data.steps.length + '</span> adım seçildi</span></div><div class="panel-body">';
     h += '<p class="muted" style="margin:0 0 14px; max-width:64ch">Excel’de ✓ / X ile işaretlediğiniz alanlar. ' +
       'Seçtiğiniz her adım, bir sonraki ekranda iş emrine dönüşür.</p>';
+    // Tekliften gelen kalemler: eşleşenler satın alma adımı olarak ön seçildi,
+    // eşleşmeyenler "serbest kalem" — kullanıcı uygun adımı kendi seçer.
+    if (w.quoteNo && (w.preset || (w.freeItems || []).length)) {
+      h += '<div class="banner banner-info" style="margin-bottom:14px"><span aria-hidden="true">i</span><div>' +
+        '<strong>Tekliften ' + (w.preset || 0) + ' kalem satın alma adımı olarak ön seçildi.</strong>' +
+        ((w.freeItems || []).length
+          ? 'Eşleşmeyen kalemler (serbest kalem, uygun adımı siz seçin): ' +
+            esc(w.freeItems.map(function (f) { return f.name + (f.qty ? " × " + f.qty : ""); }).join(", "))
+          : 'Tüm kalemler katalog adımlarıyla eşleşti.') + '</div></div>';
+    }
     const chip = function (s) {
       const on2 = !!w.sel[s.id];
       return '<button type="button" class="chip' + (on2 ? " on" : "") + '" data-pick="' + esc(s.id) + '">' +
