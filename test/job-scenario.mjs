@@ -40,15 +40,18 @@ export async function jobScenario(t) {
 
   await t.fill("#m-name", "Kaynak makinesi bakımı");
   await t.fill("#m-spec", "Yıllık bakım, tel besleme ünitesi kontrolü");
-  await t.select("#m-dept", "d-cizim"); await t.wait(100);
-  ok("sorumlu listesi departmana göre süzüldü",
+  await t.select("#m-dept", "d-uretim"); await t.wait(100);
+  ok("bölümlü departmanda bölüm alanı açıldı", !(await t.prop("#m-section-wrap", "hidden")));
+  await t.select("#m-section", "metal"); await t.wait(100);
+  ok("sorumlu listesi departman ve bölüme göre süzüldü",
     (await t.eval(function () { return [].map.call(document.querySelectorAll("#m-assignee option"), function (o) { return o.textContent; }).join("|"); })).includes("Test Yöneticisi"));
   await t.select("#m-assignee", me.id);
   await t.fill("#m-dueDate", iso(-2)); await t.change("#m-dueDate");
   await t.click("[data-msave]"); await t.wait(500);
   const j1 = await jobNamed("Kaynak makinesi bakımı");
   ok("proje dışı iş emri açıldı", !!j1 && j1.projectId === "" && j1.status === "bekliyor");
-  ok("departman, sorumlu, termin kaydedildi", !!j1 && j1.dept === "d-cizim" && j1.assignee === me.id && j1.dueDate === iso(-2));
+  ok("departman, bölüm, sorumlu, termin kaydedildi", !!j1 && j1.dept === "d-uretim" && j1.section === "metal" && j1.assignee === me.id && j1.dueDate === iso(-2),
+    JSON.stringify(j1 && { dept: j1.dept, section: j1.section }));
   ok("açan kişi kaydedildi", !!j1 && j1.createdByName === "Test Yöneticisi", j1 && j1.createdByName);
 
   /* ---------- pencere açıkken gelen güncelleme yazılanı silmez ---------- */
@@ -62,7 +65,8 @@ export async function jobScenario(t) {
   await t.wait(300);
   ok("başka bir güncelleme gelince pencerede yazılan kaybolmadı", (await t.prop("#m-name", "value")) === "Numune panel",
     await t.prop("#m-name", "value"));
-  await t.select("#m-dept", "d-metal");
+  await t.select("#m-dept", "d-tasarim"); await t.wait(100);
+  ok("bölümsüz departmanda bölüm alanı gizli", await t.prop("#m-section-wrap", "hidden"));
   await t.select("#m-type", "qty"); await t.wait(100);
   await t.click("[data-msave]"); await t.wait(300);
   ok("adet takipli işte gereken adet zorunlu", !(await jobNamed("Numune panel")));
@@ -72,22 +76,23 @@ export async function jobScenario(t) {
   await t.click("#m-urgent");
   await t.click("[data-msave]"); await t.wait(500);
   const j2 = await jobNamed("Numune panel");
-  ok("adet takipli acil iş emri açıldı", !!j2 && j2.type === "qty" && j2.qty === "10" && j2.urgent === true && j2.dept === "d-metal");
-  ok("sorumlusu atanmamış iş departmanın işi olarak açıldı", !!j2 && j2.assignee === "");
+  ok("adet takipli acil iş emri açıldı", !!j2 && j2.type === "qty" && j2.qty === "10" && j2.urgent === true && j2.dept === "d-tasarim");
+  ok("sorumlusu atanmamış iş departmanın işi olarak açıldı", !!j2 && j2.assignee === "" && j2.section === "");
 
   /* ---------- liste, sayılar ve süzgeçler ---------- */
   let k = await kpis();
   ok("KPI: açık 2, geciken 1, acil 1", k["Açık iş"] === 2 && k["Geciken"] === 1 && k["Acil"] === 1, JSON.stringify(k));
   ok("açık süzgeçte iki satır", (await t.count("#main [data-task]")) === 2, String(await t.count("#main [data-task]")));
-  ok("departman bantlarıyla gruplandı",
-    (await t.text("#main")).includes("Çizim / Tasarım") && (await t.text("#main")).includes("Metal"));
+  ok("departman bantlarıyla gruplandı, bölüm etiketi satırda",
+    (await t.text("#main")).includes("Tasarım") && (await t.text("#main")).includes("Üretim Planlama") &&
+    (await t.eval(function () { return [].map.call(document.querySelectorAll("#main [data-task] .tspec .tag"), function (x) { return x.textContent; }).join("|"); })).includes("Metal"));
   ok("acil etiketi görünüyor", (await t.count("#main .tag-urgent")) === 1);
   await t.click('[data-jobfilter="gecikti"]'); await t.wait(250);
   ok("geciken süzgeci", (await t.count("#main [data-task]")) === 1 && (await t.text("#main")).includes("Kaynak makinesi bakımı"));
   await t.click('[data-jobfilter="acil"]'); await t.wait(250);
   ok("acil süzgeci", (await t.count("#main [data-task]")) === 1 && (await t.text("#main")).includes("Numune panel"));
   await t.click('[data-jobfilter="tumu"]'); await t.wait(250);
-  await t.select("#job-dept", "d-metal"); await t.wait(250);
+  await t.select("#job-dept", "d-tasarim"); await t.wait(250);
   ok("departman süzgeci", (await t.count("#main [data-task]")) === 1);
   await t.select("#job-dept", ""); await t.wait(250);
   await t.fill("#job-search", "tel besleme"); await t.wait(250);
@@ -112,7 +117,7 @@ export async function jobScenario(t) {
   await t.click("#m-urgent");
   await t.click("[data-msave]"); await t.wait(500);
   const j1b = await jobNamed("Kaynak makinesi yıllık bakımı");
-  ok("iş emri adı ve acil işareti düzenlendi", !!j1b && j1b.urgent === true && j1b.dept === "d-cizim");
+  ok("iş emri adı ve acil işareti düzenlendi", !!j1b && j1b.urgent === true && j1b.dept === "d-uretim" && j1b.section === "metal");
 
   /* ---------- panel: iki yarı ---------- */
   await t.click('[data-nav="panel"]'); await t.wait(400);

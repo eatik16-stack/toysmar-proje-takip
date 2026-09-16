@@ -184,7 +184,7 @@ export async function quoteScenario(t) {
   ok("sihirbazda teklif bilgisi görünüyor", (await t.text("#main")).includes(NO + "-R1"));
   await t.fill("#w-dueDate", "2026-12-20"); await t.change("#w-dueDate");
   await t.click('[data-wnext="2"]'); await t.wait(300);
-  await t.click('[data-pick="s-cizim"]'); await t.wait(150);
+  await t.click('[data-pick="t-2d"]'); await t.wait(150);
   await t.click('[data-wnext="3"]'); await t.wait(300);
   await t.click("[data-wsave]"); await t.wait(900);
   d = await t.db();
