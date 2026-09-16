@@ -18,6 +18,7 @@ import * as QA from "./quote-app.js";
 import { linkProject, quoteLabel } from "./quotes.js";
 import { ROLE_ORDER, roleDef } from "./roles.js";
 import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS, DEFAULT_SECTIONS, STEP_TYPES } from "./seed.js";
+import { filesOf, uploadTaskFile, archiveFile, storageHint, checkFile } from "./files.js";
 
 const S = {
   view: lsGet("toysmar.view") || "panel",
@@ -337,6 +338,9 @@ async function toggleTask(id, force) {
       "“" + t.name + "” geri alındı"));
     return;
   }
+  // Dosya tipinde en az bir dosya, metin tipinde metin olmadan tamamlanmaz.
+  if (t.type === "file" && !filesOf(t.id).length) { toast("“" + t.name + "” için önce dosya yükleyin."); return; }
+  if (t.type === "text" && !String(t.text || "").trim()) { toast("“" + t.name + "” için önce metni girin."); return; }
   const need = needOf(t), made = doneOf(t);
   if (t.type === "qty" && need > 0 && made < need && !force) {
     if (t.doneQty === null || t.doneQty === undefined || t.doneQty === "")
@@ -896,6 +900,11 @@ document.addEventListener("click", async function (e) {
   }
   if ((el = e.target.closest("[data-open-proj]"))) { openProject(el.getAttribute("data-open-proj")); return; }
   if ((el = e.target.closest("[data-ptab]"))) { S.projTab = el.getAttribute("data-ptab"); render(); return; }
+  if (e.target.closest("[data-filesarch]")) { S.showArchivedFiles = !S.showArchivedFiles; render(); return; }
+  if ((el = e.target.closest("[data-filearch]"))) {
+    await guard(archiveFile(el.getAttribute("data-filearch"), el.getAttribute("data-on") === "1"));
+    return;
+  }
   if ((el = e.target.closest("[data-accsave]"))) {
     const pid = el.getAttribute("data-accsave");
     const body = {};
@@ -994,6 +1003,23 @@ document.addEventListener("change", async function (e) {
     return;
   }
 
+  // Dosya yükleme: satırdaki "dosya ekle / dosya yükle" bağlantısı.
+  if (t.hasAttribute && t.hasAttribute("data-upload")) {
+    const task = byId(data.tasks, t.getAttribute("data-upload"));
+    const file = t.files && t.files[0];
+    if (!task || !file) return;
+    const problem = checkFile(file);
+    if (problem) { toast(problem, "error"); t.value = ""; return; }
+    toast("“" + file.name + "” yükleniyor…");
+    try {
+      await uploadTaskFile(task, file);
+      toast("“" + file.name + "” yüklendi.");
+    } catch (err) {
+      toast(storageHint(err), "error");
+    }
+    return;
+  }
+
   if (await QA.onChange(e)) return;
 
   if (t.hasAttribute && t.hasAttribute("data-w")) {
@@ -1018,6 +1044,19 @@ document.addEventListener("change", async function (e) {
     const task = byId(data.tasks, tid); if (!task) return;
     let patch;
     if (f === "qty" || f === "doneQty") patch = qtyPatch(task, f, t.value);
+    else if (f === "text") {
+      // Metin tipi: metin girilince tamamlanmış sayılır, silinince yeniden açılır.
+      const v = t.value.trim();
+      patch = { text: v };
+      if (v && task.status !== "tamam") {
+        Object.assign(patch, { status: "tamam", completedAt: new Date().toISOString(), completedBy: myEmail(), completedByName: myName() });
+      } else if (!v && task.status === "tamam") {
+        Object.assign(patch, { status: "bekliyor", completedAt: "", completedBy: "", completedByName: "" });
+      }
+      await guard(store.saveTask(tid, patch, "“" + task.name + "”: " + (v ? v : "metin silindi")));
+      if (v && task.status !== "tamam") toast("“" + task.name + "” tamamlandı.");
+      return;
+    }
     else {
       patch = {}; patch[f] = t.value;
       if (f === "dept") { patch.section = ""; patch.assignee = ""; }
