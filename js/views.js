@@ -5,7 +5,7 @@ import {
   needOf, doneOf, shortOf, taskState, stateLabel, dotClass
 } from "./util.js";
 import {
-  data, projTasks, progress, activeProjects, deptName, personName, mePerson,
+  data, projTasks, progress, activeProjects, visibleProjects, deptName, personName, mePerson,
   canEditTask, pendingRequests, jobs, isJob, activeProjectTasks,
   sectionsOf, sectionName, peopleFor, accountingOf
 } from "./store.js";
@@ -122,6 +122,11 @@ export function taskRow(t) {
   const sub = [];
   if (t.urgent && !done) sub.push('<span class="tag tag-urgent">Acil</span>');
   if (t.section && isJob(t)) sub.push('<span class="tag">' + esc(sectionName(t.dept, t.section)) + '</span>');
+  // Başka departmana açılan iş: açan kişi izler, hedef departman kapatır.
+  if (isJob(t) && t.openedBy && t.openedByDept && t.openedByDept !== t.dept) {
+    sub.push('<span class="tag" title="' + esc(deptName(t.openedByDept)) + '">' +
+      (t.openedBy === myEmail() ? "açtınız — " + esc(deptName(t.dept)) + " kapatır" : "açan: " + esc(t.openedByName || t.openedBy)) + '</span>');
+  }
   if (t.spec) sub.push(esc(t.spec));
   if (t.orderStatus) sub.push('<span class="tag">' + esc(t.orderStatus) + '</span>');
   if (t.shortClosed) sub.push('<span class="tag tag-warn">eksik kapatıldı ' + made + '/' + need + '</span>');
@@ -314,7 +319,7 @@ export function viewPanel(S) {
   let h = '<div class="page-head"><div><h1>Panel</h1><div class="sub">' +
     fmtDate(todayISO()) + ' · proje işleri ve proje dışı işler</div></div><div class="row-actions">' +
     (canSee("yeni") ? '<button class="btn" data-nav="yeni">Yeni proje</button>' : '') +
-    (canPlan() ? '<button class="btn btn-pri" data-newjob="1">Proje dışı iş emri</button>' : '') +
+    '<button class="btn btn-pri" data-newjob="1">Proje dışı iş emri</button>' +
     '</div></div>';
 
   h += migrationBanner();
@@ -328,7 +333,7 @@ export function viewPanel(S) {
     kpi(P.open.length, "Açık iş", P.done + " / " + P.all.length + " bitti", "") +
     kpi(P.late.length, "Geciken", P.late.length ? "Termini geçti" : "Gecikme yok", P.late.length ? "alert" : "") +
     kpi(P.soon.length, "7 gün içinde", "Termini yaklaşan", P.soon.length ? "warn" : "") +
-    kpi(active.length, "Aktif proje", data.projects.length + " proje kayıtlı", "") + '</div>' +
+    kpi(active.length, "Aktif proje", visibleProjects().length + " proje kayıtlı", "") + '</div>' +
     '<div class="panel"><div class="panel-head"><h2>Dikkat gerektiren</h2><span class="muted mono">' + pAtt.length + '</span></div>' +
     attentionTable(pAtt, false) + '</div></section>';
 
@@ -391,7 +396,7 @@ export function viewPanel(S) {
 
 const JOB_FILTERS = [
   { id: "acik", label: "Açık" }, { id: "gecikti", label: "Geciken" }, { id: "acil", label: "Acil" },
-  { id: "tamam", label: "Tamamlanan" }, { id: "tumu", label: "Tümü" }
+  { id: "actiklarim", label: "Açtıklarım" }, { id: "tamam", label: "Tamamlanan" }, { id: "tumu", label: "Tümü" }
 ];
 
 function jobPass(t, f) {
@@ -399,6 +404,7 @@ function jobPass(t, f) {
   if (f === "acik") return !done;
   if (f === "gecikti") { const d = daysBetween(t.dueDate); return !done && d !== null && d < 0; }
   if (f === "acil") return !done && !!t.urgent;
+  if (f === "actiklarim") return !!t.openedBy && t.openedBy === myEmail();
   if (f === "tamam") return done;
   return true;
 }
@@ -410,8 +416,9 @@ export function viewJobs(S) {
   const f = S.jobFilter || "acik";
 
   let h = '<div class="page-head"><div><h1>Proje dışı işler</h1>' +
-    '<div class="sub">Projeye bağlı olmayan iş emirleri — bakım, tamir, numune, iç işler</div></div>' +
-    (plan ? '<button class="btn btn-pri" data-newjob="1">Yeni iş emri</button>' : '') + '</div>';
+    '<div class="sub">Projeye bağlı olmayan iş emirleri — bakım, tamir, numune, iç işler. ' +
+    'Her rol başka bir departmana iş açabilir; açan izler, hedef departman kapatır.</div></div>' +
+    '<button class="btn btn-pri" data-newjob="1">Yeni iş emri</button></div>';
 
   h += '<div class="kpis">' +
     kpi(st.open.length, "Açık iş", st.done + " / " + all.length + " bitti", "") +
@@ -421,8 +428,8 @@ export function viewJobs(S) {
 
   if (!all.length) {
     return h + '<div class="panel"><div class="empty"><h3>Henüz proje dışı iş emri yok</h3>' +
-      '<p>' + (plan ? "“Yeni iş emri” ile bir departmana ya da kişiye iş açın." : "Size ya da departmanınıza açılan işler burada görünür.") + '</p>' +
-      (plan ? '<button class="btn btn-pri" data-newjob="1" style="margin-top:10px">Yeni iş emri</button>' : '') + '</div></div>';
+      '<p>' + (plan ? "“Yeni iş emri” ile bir departmana ya da kişiye iş açın." : "Size, bölümünüze ya da departmanınıza açılan işler ve sizin açtıklarınız burada görünür.") + '</p>' +
+      '<button class="btn btn-pri" data-newjob="1" style="margin-top:10px">Yeni iş emri</button></div></div>';
   }
 
   const term = String(S.jobSearch || "").toLocaleLowerCase("tr-TR").trim();
@@ -467,8 +474,8 @@ export function viewJobs(S) {
 /* ================= projeler ================= */
 
 export function viewProjects(S) {
-  const list = S.showArchived ? data.projects.slice() : activeProjects();
-  const archCount = data.projects.filter(function (p) { return p.archived; }).length;
+  const list = S.showArchived ? visibleProjects() : activeProjects();
+  const archCount = visibleProjects().filter(function (p) { return p.archived; }).length;
 
   const projTaskCount = data.tasks.filter(function (t) { return !isJob(t); }).length;
   let h = '<div class="page-head"><div><h1>Projeler</h1><div class="sub">' +
@@ -912,8 +919,9 @@ export function viewRequests(S) {
     return String(b.decidedAt || b.at || "").localeCompare(String(a.decidedAt || a.at || ""));
   });
 
+  const d0 = (data.depts[0] || {}).id || "";
   let h = '<div class="page-head"><div><h1>Erişim talepleri</h1>' +
-    '<div class="sub">Görevine bakıp rol verin — rol, gireceği ekranları belirler</div></div></div>';
+    '<div class="sub">Görevine bakıp rol verin — rol, gireceği ekranları; departman ve bölüm, göreceği iş emirlerini belirler</div></div></div>';
 
   h += '<div class="panel"><div class="panel-head"><h2>Bekleyen</h2>' +
     '<span class="muted mono">' + pend.length + '</span></div><div class="panel-body">';
@@ -932,6 +940,10 @@ export function viewRequests(S) {
       data.depts.map(function (d) {
         return '<option value="' + esc(d.id) + '">' + esc(d.name) + '</option>';
       }).join("") + '</select>' +
+      '<select class="inp-sm rq-role" data-reqsection="' + esc(r.id) + '" aria-label="Bölüm"' +
+      (sectionsOf(d0).length ? '' : ' hidden') + '><option value="">Bölüm seçin</option>' +
+      sectionsOf(d0).map(function (s) { return '<option value="' + esc(s.id) + '">' + esc(s.name) + '</option>'; }).join("") +
+      '</select>' +
       '<select class="inp-sm rq-role" data-reqrole="' + esc(r.id) + '" aria-label="Verilecek rol">' +
       ROLE_ORDER.map(function (k) {
         return '<option value="' + esc(k) + '"' + (k === "personel" ? " selected" : "") + '>' +
@@ -960,15 +972,25 @@ export function viewRequests(S) {
 
   h += '<div class="panel"><div class="panel-head"><h2>Roller ne görür</h2></div>' +
     '<div class="panel-body"><div class="tw"><table><thead><tr><th>Rol</th><th>Ekranlar</th>' +
-    '<th>Düzenleyebildiği iş emirleri</th></tr></thead><tbody>';
-  const SCOPE = { hepsi: "Hepsi", departman: "Kendi departmanı", kendi: "Kendine atananlar" };
+    '<th>Gördüğü iş emirleri</th><th>Kapatabildiği iş emirleri</th></tr></thead><tbody>';
+  const SEES = {
+    yonetici: "Hepsi", planlamaci: "Hepsi", muhasebe: "Hepsi", satis: "Hepsi",
+    sef: "Departmanının tüm bölümleri", personel: "Kendi bölümü; bölümü yoksa departmanı"
+  };
+  const SCOPE = {
+    hepsi: "Hepsi", departman: "Kendi departmanı",
+    bolum: "Kendine ya da bölümüne açılanlar", kendi: "Kendine atananlar"
+  };
   ROLE_ORDER.forEach(function (k) {
     const d = roleDef(k);
     h += '<tr><td style="font-weight:600">' + esc(d.label) + '</td>' +
       '<td class="muted">' + esc(d.views.filter(function (v) { return VIEW_LABEL[v]; })
         .map(function (v) { return VIEW_LABEL[v]; }).join(", ")) + '</td>' +
+      '<td class="muted">' + esc(SEES[k] || "") + '</td>' +
       '<td class="muted">' + esc(SCOPE[d.scope] || d.scope) + '</td></tr>';
   });
+  h += '<tr><td colspan="4" class="muted" style="font-size:12px">Herkes kendi açtığı ve kendine atanan iş emrini görür. ' +
+    'Başka departmana açılan iş emrini açan kişi izler, hedef departman kapatır.</td></tr>';
   h += '</tbody></table></div></div></div>';
 
   return h;
