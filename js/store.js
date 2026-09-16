@@ -3,7 +3,10 @@
 // salt eklemedir (kurallarda update/delete kapalı), yani geçmiş kaybolmaz.
 
 import { fb } from "./fb.js";
-import { myEmail, myName, myRole, isAdmin, canPlan, canSell, canAccount } from "./auth.js";
+import {
+  myEmail, myName, myRole, isAdmin, canPlan, canSell, canAccount,
+  seesAll, myDept, mySection, myPersonId
+} from "./auth.js";
 import { uid } from "./util.js";
 import { CATALOG_VERSION, DEFAULT_SECTIONS, LEGACY_DEPT_MAP } from "./seed.js";
 
@@ -83,15 +86,18 @@ export async function subscribeAll(onChange, onError) {
     data.loaded.projects = true; onChange();
   }, fail("projeler")));
 
-  unsubs.push(f.onSnapshot(f.collection(f.db, "tasks"), function (s) {
-    data.tasks = rowsOf(s);
-    data.loaded.tasks = true; onChange();
-  }, fail("iş emirleri")));
-
-  unsubs.push(f.onSnapshot(f.collection(f.db, "files"), function (s) {
-    data.files = rowsOf(s);
+  // Şef ve personel yalnızca kapsamındaki iş emirlerini ve dosyaları çeker;
+  // kurallar da yalnızca bu sorgulara izin verir (koleksiyonun tamamı reddedilir).
+  subscribeScoped(f, "tasks", function (rows, complete) {
+    data.tasks = rows.filter(canSeeTask);
+    if (complete) data.loaded.tasks = true;
     onChange();
-  }, fail("dosyalar")));
+  }, fail("iş emirleri"));
+
+  subscribeScoped(f, "files", function (rows) {
+    data.files = rows;
+    onChange();
+  }, fail("dosyalar"));
 
   // Muhasebe bilgileri proje belgesinde değil, ayrı koleksiyonda: diğer roller okuyamaz.
   if (canAccount()) {
@@ -129,6 +135,74 @@ export async function subscribeAll(onChange, onError) {
 export function stopAll() {
   unsubs.forEach(function (u) { try { u(); } catch (e) {} });
   unsubs = [];
+}
+
+/* ---------------- görünürlük kapsamı (karar 6) ---------------- */
+
+// Giriş yapanın departmanı, bölümü ve personel kimliği: önce yetki kaydından,
+// yoksa personel listesinden.
+function scope() {
+  const p = mePerson();
+  return {
+    dept: myDept() || (p && p.dept) || "",
+    section: mySection() || (p && p.section) || "",
+    personId: myPersonId() || (p && p.id) || ""
+  };
+}
+
+// Kapsamlı rollerin (şef, personel) sorguları. Bölümlü personelde kendi bölümü
+// ve bölümsüz iş emirleri iki ayrı sorgudur; yalnızca eşitlik içerdiklerinden
+// Firestore bileşik dizin istemez. Herkes kendi açtığı ve kendine atanan işi görür.
+function scopedQueries(f, col) {
+  const c = f.collection(f.db, col), sc = scope(), qs = [];
+  if (sc.dept) {
+    if (myRole() === "personel" && sc.section) {
+      qs.push(f.query(c, f.where("dept", "==", sc.dept), f.where("section", "==", sc.section)));
+      qs.push(f.query(c, f.where("dept", "==", sc.dept), f.where("section", "==", "")));
+    } else {
+      qs.push(f.query(c, f.where("dept", "==", sc.dept)));
+    }
+  }
+  if (col === "tasks") {
+    qs.push(f.query(c, f.where("openedBy", "==", myEmail())));
+    if (sc.personId) qs.push(f.query(c, f.where("assignee", "==", sc.personId)));
+  } else {
+    qs.push(f.query(c, f.where("uploadedBy", "==", myEmail())));
+  }
+  return qs;
+}
+
+// Her şeyi gören rollerde koleksiyonun tamamı, diğerlerinde kapsam sorguları
+// dinlenir; parçalar kimliğe göre birleştirilir.
+function subscribeScoped(f, col, apply, onErr) {
+  if (seesAll()) {
+    unsubs.push(f.onSnapshot(f.collection(f.db, col), function (s) { apply(rowsOf(s), true); }, onErr));
+    return;
+  }
+  const qs = scopedQueries(f, col);
+  const parts = qs.map(function () { return null; });
+  qs.forEach(function (q, i) {
+    unsubs.push(f.onSnapshot(q, function (s) {
+      parts[i] = rowsOf(s);
+      const map = {};
+      parts.forEach(function (rows) { (rows || []).forEach(function (r) { map[r.id] = r; }); });
+      apply(Object.keys(map).map(function (k) { return map[k]; }), parts.every(Boolean));
+    }, onErr));
+  });
+}
+
+// Kimin hangi iş emrini gördüğü: yönetici, planlamacı, muhasebe ve satış
+// hepsini; şef departmanının tamamını; personel bölümünü (bölümü yoksa
+// departmanını). Herkes kendi açtığı ve kendine atanan işi görür.
+// Aynı sınır firestore.rules içinde (tasks okuma).
+export function canSeeTask(t) {
+  if (seesAll()) return true;
+  const sc = scope();
+  if (t.openedBy && t.openedBy === myEmail()) return true;
+  if (sc.personId && t.assignee === sc.personId) return true;
+  if (!sc.dept || t.dept !== sc.dept) return false;
+  if (myRole() === "sef") return true;
+  return !sc.section || !t.section || t.section === sc.section;
 }
 
 /* ---------------- günlük ---------------- */
@@ -367,22 +441,23 @@ export function pendingRequests() {
 // Talebi onaylar: personel kaydı yoksa açar, seçilen rol ve departmanla
 // giriş yetkisi verir. Departman önemli — şefin kapsamı ve iş emri
 // atamaları bunun üzerinden yürüyor.
-export async function approveRequest(req, role, dept) {
+export async function approveRequest(req, role, dept, section) {
   const f = await fb();
   const key = String(req.email || req.id || "").trim().toLowerCase();
   if (!key) throw new Error("Talepte e-posta yok.");
   const deptId = dept || (data.depts[0] || {}).id || "";
+  const secId = sectionsOf(deptId).length ? (section || "") : "";
 
   let person = data.people.filter(function (p) {
     return String(p.email || "").toLowerCase() === key;
   })[0];
 
   if (!person) {
-    person = { id: uid(), name: req.name || key, dept: deptId, email: key };
+    person = { id: uid(), name: req.name || key, dept: deptId, section: secId, email: key };
     await saveOrg(data.depts, data.people.concat([person]),
       "personel eklendi (talep onayı): " + person.name);
-  } else if (person.dept !== deptId) {
-    const moved = Object.assign({}, person, { dept: deptId });
+  } else if (person.dept !== deptId || (person.section || "") !== secId) {
+    const moved = Object.assign({}, person, { dept: deptId, section: secId });
     await saveOrg(data.depts, data.people.map(function (p) {
       return p.id === moved.id ? moved : p;
     }), "personel departmanı güncellendi: " + moved.name);
@@ -427,8 +502,16 @@ export function progress(pid) {
   return { done: done, total: ts.length, pct: ts.length ? Math.round(done / ts.length * 100) : 0 };
 }
 
+// Şef ve personel yalnızca kapsamında iş emri bulunan projeleri görür.
+export function visibleProjects() {
+  if (seesAll()) return data.projects.slice();
+  const has = {};
+  data.tasks.forEach(function (t) { if (t.projectId) has[t.projectId] = true; });
+  return data.projects.filter(function (p) { return has[p.id]; });
+}
+
 export function activeProjects() {
-  return data.projects.filter(function (p) { return !p.archived; });
+  return visibleProjects().filter(function (p) { return !p.archived; });
 }
 
 export function isJob(t) { return !!t && !t.projectId; }
@@ -466,12 +549,15 @@ export function mePerson() {
   return null;
 }
 
-// Kimin hangi iş emrine dokunabileceği rolden çıkar:
-// planlayan roller hepsine, şef kendi departmanına, personel kendi işine.
+// Kimin hangi iş emrini kapatabileceği: planlayan roller hepsini; şef ve
+// muhasebe kendi departmanınınkini; personel kendine ya da bölümüne (bölümü
+// yoksa departmanına) açık, kişiye atanmamış işi. Başka departmana iş açan
+// kişi onu izler ama kapatamaz. Aynı sınır firestore.rules içinde (tasks update).
 export function canEditTask(t) {
   if (canPlan()) return true;
-  const p = mePerson();
-  if (!p) return false;
-  if (myRole() === "sef") return !!(p.dept && t.dept === p.dept);
-  return t.assignee === p.id;
+  const sc = scope(), role = myRole();
+  if (role === "sef" || role === "muhasebe") return !!(sc.dept && t.dept === sc.dept);
+  if (sc.personId && t.assignee === sc.personId) return true;
+  return role === "personel" && !t.assignee && !!sc.dept && t.dept === sc.dept &&
+    (!sc.section || !t.section || t.section === sc.section);
 }
