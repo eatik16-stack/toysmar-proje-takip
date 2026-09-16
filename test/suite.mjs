@@ -36,6 +36,16 @@ export async function runSuite(t) {
   t.section("2) Proje oluşturma");
   await t.click('[data-nav="yeni"]'); await t.wait(300);
   await t.fill("#w-name", "Menemen Belediyesi");
+  await t.click('[data-wnext="2"]'); await t.wait(300);
+  ok("proje kodu olmadan ilerlenmiyor", (await t.count("#w-code")) === 1 && (await toastText()).includes("Proje kodu"));
+  await t.fill("#w-code", "m1");
+  await t.click('[data-wnext="2"]'); await t.wait(300);
+  ok("kod 2-4 büyük harf olmalı", (await t.count("#w-code")) === 1 && (await toastText()).includes("büyük harf"));
+  await t.fill("#w-code", "mb");
+  ok("kod kendiliğinden büyük harfe çevrildi", (await t.prop("#w-code", "value")) === "MB");
+  await t.fill("#w-company", "Menemen Belediyesi Fen İşleri");
+  await t.fill("#w-contact", "0232 000 00 00");
+  await t.fill("#w-salesperson", "BYM");
   await t.fill("#w-theme", "ORMAN");
   await t.fill("#w-dueDate", "2026-11-20"); await t.change("#w-dueDate");
   await t.click('[data-wnext="2"]'); await t.wait(300);
@@ -55,7 +65,44 @@ export async function runSuite(t) {
   ok("3 iş emri kaydedildi", taskKeys.length === 3, String(taskKeys.length));
   ok("bölümlü adımın iş emri bölümüyle açıldı", taskKeys.some(function (k) { return d[k].stepId === "u-metal-panel" && d[k].section === "metal"; }));
   ok("proje detayına geçildi", (await txt("h1")).includes("Menemen"));
+  ok("proje kodu ve yeni alanlar kaydedildi", d[projKeys[0]].code === "MB" && d[projKeys[0]].company === "Menemen Belediyesi Fen İşleri" &&
+    d[projKeys[0]].salesperson === "BYM" && d[projKeys[0]].contact === "0232 000 00 00", JSON.stringify(d[projKeys[0]]));
+  ok("panel sayısı alanı projeden kalktı", d[projKeys[0]].panelCount === undefined);
+  ok("kartta kod ve cari unvan görünüyor", (await txt("#main h1")).includes("MB") && (await txt("#main")).includes("Fen İşleri"));
   ok("iş emirleri departman · bölüm bantlarıyla gruplandı", (await txt("#main")).includes("Üretim Planlama · Metal"));
+
+  t.section("2b) Proje kodu benzersiz, muhasebe sekmesi");
+  await t.click('[data-nav="yeni"]'); await t.wait(300);
+  await t.fill("#w-code", "MB"); await t.fill("#w-name", "Kopya kod");
+  await t.click('[data-wnext="2"]'); await t.wait(300);
+  ok("aynı kodla ikinci proje açılamıyor", (await t.count("#w-code")) === 1 && (await toastText()).includes("başka bir projede"));
+  await t.click('[data-nav="projeler"]'); await t.wait(300);
+  ok("proje listesinde kod sütunu var", (await txt("#main thead")).includes("Kod") && (await txt("#main tbody")).includes("MB"));
+  await t.click('[data-open-proj="' + projKeys[0].split("/")[1] + '"]'); await t.wait(300);
+  ok("yöneticide Muhasebe sekmesi var", (await t.count('[data-ptab="muhasebe"]')) === 1);
+  await t.click('[data-ptab="muhasebe"]'); await t.wait(300);
+  await t.fill("#acc-total", "3100000");
+  await t.select("#acc-shippingIncluded", "dahil");
+  await t.select("#acc-installIncluded", "haric");
+  await t.fill("#acc-shippingNote", "gümrük dahil");
+  await t.fill("#acc-paymentDetail", "ön ödeme 1 milyon, kalan 8 senet");
+  await t.click("[data-accsave]"); await t.wait(500);
+  d = await db();
+  const acc = d["accounting/" + projKeys[0].split("/")[1]];
+  ok("muhasebe bilgileri ayrı koleksiyona yazıldı", !!acc && acc.total === "3100000" && acc.shippingIncluded === "dahil" &&
+    acc.installIncluded === "haric" && acc.paymentDetail.indexOf("senet") !== -1, JSON.stringify(acc));
+  ok("proje belgesine muhasebe bilgisi karışmadı", d[projKeys[0]].total === undefined && d[projKeys[0]].accounting === undefined);
+  ok("muhasebe kaydı günlüğe yazıldı", Object.keys(d).some(function (k) { return k.startsWith("log/") && d[k].action === "muhasebe"; }));
+  await t.click('[data-edit-proj]'); await t.wait(300);
+  await t.fill("#m-code", "MB2");
+  await t.click("[data-msave]"); await t.wait(300);
+  ok("düzenlemede geçersiz kod reddedildi", (await t.count("#modal-root #m-code")) === 1);
+  await t.fill("#m-code", "MBP");
+  await t.fill("#m-drafter", "EMRE");
+  await t.click("[data-msave]"); await t.wait(500);
+  d = await db();
+  ok("proje bilgileri düzenlendi (kod, çizim ve takip)", d[projKeys[0]].code === "MBP" && d[projKeys[0]].drafter === "EMRE");
+  await t.click('[data-ptab="isler"]'); await t.wait(200);
 
   t.section("3) Gereken / yapılan adet kuralı");
   const amKey = taskKeys.find(function (k) { return d[k].stepId === "sa-aktivite-masa"; });
@@ -178,6 +225,11 @@ export async function runSuite(t) {
   await t.goto(APP + "?as=ayse@toysmar.test");
   ok("yetkili personel girebildi", (await t.count("#nav")) === 1 && !(await txt("body")).includes("Erişim izni iste"), await txt("h1"));
   ok("personelde yönetici menüsü yok", !(await txt("#nav")).includes("Ayarlar"), await txt("#nav"));
+  await t.click('[data-nav="projeler"]'); await t.wait(300);
+  await t.click("[data-togglearch]"); await t.wait(300);
+  await t.click('[data-open-proj="' + projKeys[0].split("/")[1] + '"]'); await t.wait(300);
+  ok("personelde Muhasebe sekmesi yok, tutar görünmüyor", (await t.count('[data-ptab="muhasebe"]')) === 0 && !(await txt("#main")).includes("3100000"));
+  ok("personel proje kartını görüyor", (await txt("#main h1")).includes("Menemen"));
   await t.goto(APP + "?as=yok");
   ok("çıkış yapılmışsa giriş ekranı", (await txt("body")).includes("Google ile giriş"));
 
