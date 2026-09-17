@@ -1,0 +1,770 @@
+{
+ "departments": [
+  {
+   "id": "d-muhasebe",
+   "name": "Muhasebe"
+  },
+  {
+   "id": "d-satis",
+   "name": "Satış Pazarlama"
+  },
+  {
+   "id": "d-tasarim",
+   "name": "Tasarım"
+  },
+  {
+   "id": "d-uretim",
+   "name": "Üretim Planlama"
+  },
+  {
+   "id": "d-satinalma",
+   "name": "Satın Alma"
+  },
+  {
+   "id": "d-depo",
+   "name": "Depo"
+  },
+  {
+   "id": "d-kalite",
+   "name": "Kalite"
+  },
+  {
+   "id": "d-sevkiyat",
+   "name": "Sevkiyat"
+  },
+  {
+   "id": "d-montaj",
+   "name": "Montaj"
+  }
+ ],
+ "sections": {
+  "d-uretim": {
+   "metal": "Metal",
+   "kaplama": "Kaplama",
+   "mdf": "MDF",
+   "dikis": "Dikiş"
+  }
+ },
+ "orderStatusOptions": [
+  "bekliyor",
+  "siparis-verildi",
+  "imalatta",
+  "geldi",
+  "eksik"
+ ],
+ "orderStatusNote": "imalatta: Toysmar'ın kendi ürettiği kalemler (palmiye, dönerge) için; Excel AK sütununun karşılığı. Tedarikçi (supplier) alanı kaydıraklar için ADRE / KOÇAK PARK; Excel BE ve BK sütunlarının karşılığı (karar 2)",
+ "optionalFileOnAnySteps": true,
+ "stepTypes": {
+  "check": "Tamamla düğmesi",
+  "qty": "Gereken / yapılan adet; yapılan < gereken ise kapanmaz",
+  "file": "En az bir dosya yüklenmeden tamamlanamaz",
+  "text": "Metin girilince tamamlanmış sayılır"
+ },
+ "steps": [
+  {
+   "id": "m-findeks",
+   "name": "Findeks raporu",
+   "group": "muhasebe",
+   "dept": "d-muhasebe",
+   "type": "file",
+   "unit": "",
+   "order": 1,
+   "requiresFile": true,
+   "note": "Rapor proje dosyasına yüklenmeden tamamlanamaz"
+  },
+  {
+   "id": "m-siparis-onay",
+   "name": "Sipariş onayı",
+   "group": "muhasebe",
+   "dept": "d-muhasebe",
+   "type": "check",
+   "unit": "",
+   "order": 2,
+   "note": "Onay alındıysa tamamla"
+  },
+  {
+   "id": "m-odeme-tamam",
+   "name": "Ödemenin tamamı alındı",
+   "group": "muhasebe",
+   "dept": "d-muhasebe",
+   "type": "check",
+   "unit": "",
+   "order": 3,
+   "excelColumn": "CD (borç-alacak)"
+  },
+  {
+   "id": "sp-3d",
+   "name": "3D çizim",
+   "group": "satis",
+   "dept": "d-satis",
+   "type": "file",
+   "unit": "",
+   "order": 4,
+   "requiresFile": true,
+   "note": "3D görsel proje dosyasına yüklenir",
+   "excelColumn": "T (Driver yükleme)"
+  },
+  {
+   "id": "sp-sozlesme",
+   "name": "Sözleşme görüntüsü",
+   "group": "satis",
+   "dept": "d-satis",
+   "type": "file",
+   "unit": "",
+   "order": 5,
+   "requiresFile": true
+  },
+  {
+   "id": "t-2d",
+   "name": "2D çizim",
+   "group": "tasarim",
+   "dept": "d-tasarim",
+   "type": "check",
+   "unit": "",
+   "order": 6,
+   "note": "Yapıldı düğmesi yeterli; çizim dosyası eklemek isteğe bağlı (karar 1)",
+   "excelColumn": "S (Çizim durumu)"
+  },
+  {
+   "id": "u-metal-panel",
+   "name": "Metal — panel sayısı",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "qty",
+   "unit": "adet",
+   "order": 7,
+   "section": "metal",
+   "note": "İstenen / tamamlanan iki ayrı adet",
+   "excelColumn": "W"
+  },
+  {
+   "id": "u-metal-durum",
+   "name": "Metal — mekanik imalat",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "check",
+   "unit": "",
+   "order": 8,
+   "section": "metal",
+   "excelColumn": "X"
+  },
+  {
+   "id": "u-kaplama-panel",
+   "name": "Kaplama — panel sayısı",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "qty",
+   "unit": "adet",
+   "order": 9,
+   "section": "kaplama",
+   "excelColumn": "Y"
+  },
+  {
+   "id": "u-kaplama-durum",
+   "name": "Kaplama — kaplama tamamlandı",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "check",
+   "unit": "",
+   "order": 10,
+   "section": "kaplama",
+   "excelColumn": "Z"
+  },
+  {
+   "id": "u-mdf-adet",
+   "name": "MDF — MDF sayısı",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "qty",
+   "unit": "adet",
+   "order": 11,
+   "section": "mdf",
+   "excelColumn": "AD"
+  },
+  {
+   "id": "u-mdf-durum",
+   "name": "MDF — MDF siparişleri",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "check",
+   "unit": "",
+   "order": 12,
+   "section": "mdf",
+   "excelColumn": "AE"
+  },
+  {
+   "id": "u-dikis-iscilik",
+   "name": "Dikiş — dikim işçilik",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "check",
+   "unit": "",
+   "order": 13,
+   "section": "dikis",
+   "excelColumn": "AA"
+  },
+  {
+   "id": "u-dikis-dijital",
+   "name": "Dikiş — dijital siparişleri",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "check",
+   "unit": "",
+   "order": 14,
+   "section": "dikis",
+   "excelColumn": "AB"
+  },
+  {
+   "id": "u-dikis-firma",
+   "name": "Dikiş — dijital baskı firması",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "text",
+   "unit": "",
+   "order": 15,
+   "section": "dikis",
+   "note": "Tedarikçi adı yazılır",
+   "excelColumn": "AC"
+  },
+  {
+   "id": "u-stok",
+   "name": "Stok kontrolleri yapıldı",
+   "group": "uretim",
+   "dept": "d-uretim",
+   "type": "check",
+   "unit": "",
+   "order": 16
+  },
+  {
+   "id": "sa-tatami",
+   "name": "Tatami",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 17,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AF"
+  },
+  {
+   "id": "sa-top",
+   "name": "Top",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "koli",
+   "order": 18,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AG"
+  },
+  {
+   "id": "sa-balik-palmiye",
+   "name": "Balık palmiye",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 19,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AH"
+  },
+  {
+   "id": "sa-palmiye",
+   "name": "Palmiye",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 20,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AI"
+  },
+  {
+   "id": "sa-donerge",
+   "name": "Dönerge",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 21,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AJ"
+  },
+  {
+   "id": "sa-piyano",
+   "name": "Piyano",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 22,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AL"
+  },
+  {
+   "id": "sa-top-ufleme",
+   "name": "Top üfleme",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 23,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AM"
+  },
+  {
+   "id": "sa-ziplavur",
+   "name": "Zıplavur oyunu",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 24,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AN"
+  },
+  {
+   "id": "sa-hava-labirenti",
+   "name": "Hava labirenti oyunu",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 25,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AO"
+  },
+  {
+   "id": "sa-atli-karinca",
+   "name": "Atlı karınca",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 26,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AP"
+  },
+  {
+   "id": "sa-top-atma",
+   "name": "Top atma",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 27,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AQ"
+  },
+  {
+   "id": "sa-ufo",
+   "name": "UFO",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 28,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AR"
+  },
+  {
+   "id": "sa-top-fiskiyesi",
+   "name": "Top fıskiyesi",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 29,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AS"
+  },
+  {
+   "id": "sa-top-selalesi",
+   "name": "Top şelalesi",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 30,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AT"
+  },
+  {
+   "id": "sa-air-hokey",
+   "name": "Elektronik air hokey",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 31,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AU"
+  },
+  {
+   "id": "sa-langirt",
+   "name": "Elektronik langırt",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 32,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AV"
+  },
+  {
+   "id": "sa-basket",
+   "name": "Elektronik basket",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 33,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AW"
+  },
+  {
+   "id": "sa-sunger-engel",
+   "name": "Sünger engel",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 34,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AX"
+  },
+  {
+   "id": "sa-bingo-kaydirak",
+   "name": "Bingo kaydırak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 35,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AY"
+  },
+  {
+   "id": "sa-kule-spiral",
+   "name": "Kule spiral kaydırak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 36,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "AZ"
+  },
+  {
+   "id": "sa-acik-spiral",
+   "name": "Açık spiral kaydırak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 37,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BA"
+  },
+  {
+   "id": "sa-duz-tup",
+   "name": "Düz tüp kaydırak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 38,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BB"
+  },
+  {
+   "id": "sa-tup-gecis",
+   "name": "Tüp geçiş",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 39,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BC"
+  },
+  {
+   "id": "sa-plastik-kaydirak",
+   "name": "Plastik kaydırak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 40,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BD"
+  },
+  {
+   "id": "sa-huni-kaydirak",
+   "name": "Huni kaydırak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 41,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BF"
+  },
+  {
+   "id": "sa-isikli-250",
+   "name": "250'den kayan ışıklı model",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 42,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BG"
+  },
+  {
+   "id": "sa-isikli-150",
+   "name": "150'den kayan ışıklı model",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 43,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BH"
+  },
+  {
+   "id": "sa-isikli-100",
+   "name": "100'den kayan ışıklı model",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 44,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BI"
+  },
+  {
+   "id": "sa-kum",
+   "name": "Kum",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "ton",
+   "order": 45,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BM"
+  },
+  {
+   "id": "sa-tuz",
+   "name": "Tuz",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "ton",
+   "order": 46,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BO"
+  },
+  {
+   "id": "sa-kum-tuz-oyuncak",
+   "name": "Kum-tuz oyuncak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 47,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BP"
+  },
+  {
+   "id": "sa-mineflo",
+   "name": "Zemin mineflo",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "m²",
+   "order": 48,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BQ"
+  },
+  {
+   "id": "sa-sallanan",
+   "name": "Sallanan oyuncak",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 49,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BR"
+  },
+  {
+   "id": "sa-tirtil",
+   "name": "Plastik tırtıl",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 50,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BS"
+  },
+  {
+   "id": "sa-tas-ev",
+   "name": "Plastik taş ev",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 51,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BT"
+  },
+  {
+   "id": "sa-aktivite-masa",
+   "name": "Aktivite masa",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 52,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BU"
+  },
+  {
+   "id": "sa-ayakkabilik",
+   "name": "Ayakkabılık",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 53,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BV"
+  },
+  {
+   "id": "sa-isikli-kasa",
+   "name": "Işıklı kasa",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 54,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BW"
+  },
+  {
+   "id": "sa-izleme-sandalye",
+   "name": "İzleme alanı sandalyesi",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 55,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BX"
+  },
+  {
+   "id": "sa-pota",
+   "name": "Plastik pota",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 56,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BY"
+  },
+  {
+   "id": "sa-tirmanma",
+   "name": "6 gen tırmanma",
+   "group": "satinalma",
+   "dept": "d-satinalma",
+   "type": "qty",
+   "unit": "adet",
+   "order": 57,
+   "note": "Adet + özellik (renk/model) + tedarikçi + sipariş durumu",
+   "excelColumn": "BZ"
+  },
+  {
+   "id": "dp-malzeme",
+   "name": "Malzemeler geldi",
+   "group": "depo",
+   "dept": "d-depo",
+   "type": "check",
+   "unit": "",
+   "order": 58,
+   "note": "Satın alma siparişi varsa"
+  },
+  {
+   "id": "dp-koli",
+   "name": "Koli hazırlık",
+   "group": "depo",
+   "dept": "d-depo",
+   "type": "check",
+   "unit": "",
+   "order": 59,
+   "excelColumn": "CB"
+  },
+  {
+   "id": "dp-yukleme-listesi",
+   "name": "Yükleme listesi ve +/-",
+   "group": "depo",
+   "dept": "d-depo",
+   "type": "check",
+   "unit": "",
+   "order": 60,
+   "note": "Excel CC sütunu (karar 5)",
+   "excelColumn": "CC"
+  },
+  {
+   "id": "k-kontrol",
+   "name": "Teklif kalemleri kontrol edildi",
+   "group": "kalite",
+   "dept": "d-kalite",
+   "type": "check",
+   "unit": "",
+   "order": 61
+  },
+  {
+   "id": "sv-tamam",
+   "name": "Sevkiyat tamamlandı",
+   "group": "sevkiyat",
+   "dept": "d-sevkiyat",
+   "type": "check",
+   "unit": "",
+   "order": 62,
+   "excelColumn": "M (yükleme tarihi)"
+  },
+  {
+   "id": "sv-foto",
+   "name": "Sevkiyat fotoğrafları",
+   "group": "sevkiyat",
+   "dept": "d-sevkiyat",
+   "type": "file",
+   "unit": "",
+   "order": 63,
+   "requiresFile": true
+  },
+  {
+   "id": "mo-tamam",
+   "name": "Montaj tamamlandı",
+   "group": "montaj",
+   "dept": "d-montaj",
+   "type": "check",
+   "unit": "",
+   "order": 64,
+   "excelColumn": "N, O (montaj tarihi, ustası)"
+  },
+  {
+   "id": "mo-foto",
+   "name": "Montaj fotoğrafları",
+   "group": "montaj",
+   "dept": "d-montaj",
+   "type": "file",
+   "unit": "",
+   "order": 65,
+   "requiresFile": true
+  }
+ ]
+}
