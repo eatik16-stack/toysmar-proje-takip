@@ -424,3 +424,11 @@ table.matrix td.cell{padding:0; width:26px; height:30px; text-align:center; bord
   .rail-foot{margin:0; width:100%}
   .main{padding:16px 16px 48px}
 }
+
+/* ---------- satın alma tablosu, kilitler ---------- */
+table.purchase td{vertical-align:top}
+table.purchase tr.done td{opacity:.7}
+table.purchase input.inp-sm{min-width:96px}
+table.purchase .c-act{align-items:flex-end}
+.tspec.lock{color:var(--warn); margin-top:3px}
+.banner-info{background:var(--accent-soft); color:var(--accent-ink)}

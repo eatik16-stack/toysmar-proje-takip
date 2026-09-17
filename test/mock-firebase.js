@@ -59,6 +59,19 @@
     return o;
   }
   function clone(o) { return o === undefined ? undefined : JSON.parse(JSON.stringify(o)); }
+  // setDoc(..., { merge: true }): gerçek SDK gibi iç içe haritalar birleştirilir.
+  function isMap(v) { return v && typeof v === "object" && !Array.isArray(v); }
+  function deepMerge(base, patch) {
+    const out = Object.assign({}, base || {});
+    Object.keys(patch || {}).forEach(function (k) {
+      const v = patch[k];
+      out[k] = (isMap(v) && isMap(out[k])) ? deepMerge(out[k], v) : clone(v);
+    });
+    return out;
+  }
+  function putDoc(path, body, opts) {
+    DB[path] = (opts && opts.merge && DB[path] !== undefined) ? deepMerge(DB[path], body) : clone(body);
+  }
 
   function docSnap(path) {
     const body = DB[path];
@@ -179,8 +192,8 @@
       });
     },
 
-    setDoc: function (r, body) {
-      DB[r.__path] = clone(body);
+    setDoc: function (r, body, opts) {
+      putDoc(r.__path, body, opts);
       window.__MOCK_WRITES__.push(["set", r.__path]); persist();
       fire(r.__path); return Promise.resolve();
     },
@@ -250,12 +263,12 @@
     writeBatch: function () {
       const ops = [];
       return {
-        set: function (r, b) { ops.push(["set", r.__path, b]); },
+        set: function (r, b, opts) { ops.push(["set", r.__path, b, opts]); },
         update: function (r, b) { ops.push(["update", r.__path, b]); },
         delete: function (r) { ops.push(["delete", r.__path]); },
         commit: function () {
           ops.forEach(function (o) {
-            if (o[0] === "set") DB[o[1]] = clone(o[2]);
+            if (o[0] === "set") putDoc(o[1], o[2], o[3]);
             else if (o[0] === "update") DB[o[1]] = Object.assign({}, DB[o[1]], clone(o[2]));
             else delete DB[o[1]];
             window.__MOCK_WRITES__.push([o[0], o[1]]);
