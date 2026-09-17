@@ -243,7 +243,10 @@ artırılırsa tamamlanmış adım kendiliğinden yeniden açılır. Yönetici i
 
 ## Mevcut projeleri içe aktarma
 
-Excel'deki 13 proje `tools/toysmar-mevcut-projeler.json` olarak çıkarıldı.
+Excel'deki 13 proje `toysmar-mevcut-projeler.json` olarak çıkarıldı. Dosya
+müşteri telefonu, adresi ve ödeme koşulları taşıdığı için **depoya konmaz**
+(depo herkese açık); yöneticinin kendi bilgisayarında durur. Testler bu dosya
+yoksa müşteri bilgisi içermeyen `test/ornek-projeler.json` ile çalışır.
 Yönetici Ayarlar → **Mevcut projeleri içe aktar** ile dosyayı seçer ya da
 içeriğini yapıştırır; önce özet gelir (eklenecek / atlanacak / kod bekliyor),
 kodu boş projelere özet penceresinde 2–4 harflik kod yazılır, onaylanınca proje,
@@ -252,8 +255,8 @@ günlüğe tek satır düşer. Kurallar: `tamamlandi` → iş emri kapalı,
 `completedBy: excel-aktarim`, tarih boş; `devam` → açık, notu “İmalatta (Excel)”;
 `siparis-verildi` → açık, sipariş durumu “sipariş verildi”; adetler olduğu gibi;
 ISO olmayan terminler proje notuna düşer. Aynı kodlu proje ikinci çalıştırmada
-atlanır. Erva Çikolata (bedelsiz montaj) ve İ Spor (yedek parça) tam proje
-değildir, aktarılır ama not düşülür.
+atlanır. 2 numaralı (bedelsiz montaj) ve 12 numaralı (yedek parça) kayıtlar
+tam proje değildir, aktarılır ama not düşülür.
 
 ## Dosya düzeni
 
@@ -279,8 +282,8 @@ js/quote-app.js       teklif olayları: otomatik kayıt, ekleme, gönderme, yazd
 js/sales-seed.js      teklif modülü başlangıç verileri (ürünler, koşullar)
 firestore.rules       Firestore yetki kuralları (Console'a yapıştırılıp yayınlanır)
 storage.rules         Storage kuralları (Console → Storage → Rules)
-tools/                görev dosyası, adım kataloğu ve mevcut projeler (JSON), fiyat köprüsü
-test/                 sahte Firebase ile uçtan uca test
+tools/                görev dosyası, adım kataloğu (JSON), fiyat köprüsü
+test/                 sahte Firebase ile uçtan uca test (ornek-projeler.json: müşteri bilgisiz içe aktarma örneği)
 ```
 
 ## Test

@@ -1,5 +1,6 @@
 // Mevcut projeleri içe aktarma (görev bölüm 7): Excel'den çıkarılmış
-// tools/toysmar-mevcut-projeler.json dosyası Ayarlar'dan yüklenir, özet
+// toysmar-mevcut-projeler.json dosyası (müşteri bilgisi taşır, depoya
+// konmaz) Ayarlar'dan yüklenir, özet
 // gösterilir, onaylanınca proje + iş emirleri + muhasebe bilgisi yazılır.
 // Aynı kodlu proje ikinci kez aktarılmaz; kodu boş projeler için kullanıcı
 // özet penceresinde kod verir, vermezse o proje atlanır.
@@ -11,8 +12,8 @@ import { canonicalStepId } from "./seed.js";
 
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
-// Tam proje olmayan kayıtlar (görev bölüm 7): 2 = Erva Çikolata (bedelsiz montaj),
-// 12 = İ Spor (yedek parça). Tutarı olmayan ya da açıklaması bunu söyleyen
+// Tam proje olmayan kayıtlar (görev bölüm 7): 2 = bedelsiz montaj,
+// 12 = yedek parça. Tutarı olmayan ya da açıklaması bunu söyleyen
 // projeler de aynı notu alır; içe aktarılır ama not düşülür.
 const PARTIAL_BY_NO = { 2: "bedelsiz montaj", 12: "yedek parça" };
 function partialReason(p) {

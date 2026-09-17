@@ -32,8 +32,16 @@ export async function importScenario(t) {
   await t.click('[data-mysection=""]'); await t.wait(200);
 
   /* ---------- içe aktarma ---------- */
-  const raw = await t.fetchText("tools/toysmar-mevcut-projeler.json");
-  const json = JSON.parse(raw);
+  // Gerçek Excel dökümü müşteri bilgisi taşır, depoya girmez. Yerelde varsa onunla,
+  // yoksa (CI) müşteri bilgisi olmayan test/ornek-projeler.json ile denenir.
+  let raw = "", json = null, real = false;
+  try {
+    raw = await t.fetchText("tools/toysmar-mevcut-projeler.json"); json = JSON.parse(raw);
+    real = !!(json && Array.isArray(json.projects));
+  } catch (e) { real = false; }
+  // Sunucu 404'te "404" gibi geçerli JSON dönebilir; projects dizisi yoksa örneğe düşülür.
+  if (!real) { raw = await t.fetchText("test/ornek-projeler.json"); json = JSON.parse(raw); }
+  ok("içe aktarma verisi okundu (" + (real ? "yerel Excel dökümü" : "örnek dosya") + ")", json.projects.length > 0);
   const total = json.projects.length;
   const codeless = json.projects.filter(function (p) { return !p.code; }).map(function (p, i) { return p; });
   const taskTotal = json.projects.reduce(function (n, p) { return n + Object.keys(p.tasks || {}).length; }, 0);
@@ -64,9 +72,10 @@ export async function importScenario(t) {
   ok(total + " proje aktarıldı", projs.length === before + total, String(projs.length - before));
   const imported = Object.keys(d).filter(function (k) { return k.startsWith("tasks/") && d[k].importedFrom === "excel"; });
   ok(taskTotal + " iş emri aktarıldı", imported.length === taskTotal, String(imported.length));
+  const src = json.projects.find(function (p) { return p.code === "AP"; });
   const apKey = projs.find(function (k) { return d[k].code === "AP"; });
   const ap = d[apKey], apId = apKey.split("/")[1];
-  ok("AP projesi alanlarıyla geldi", ap.name.indexOf("AYŞE ERDOĞAN") === 0 && ap.theme === "SOFT" && ap.salesperson === "BYM" && ap.startDate === "2026-06-29", JSON.stringify(ap));
+  ok("AP projesi alanlarıyla geldi", ap.name === src.name && ap.theme === "SOFT" && ap.salesperson === "BYM" && ap.startDate === "2026-06-29", JSON.stringify(ap));
   ok("ISO olmayan termin nota düştü", ap.dueDate === "" && ap.note.indexOf("03-07.08.2026") !== -1, ap.note);
   const apTasks = imported.filter(function (k) { return d[k].projectId === apId; }).map(function (k) { return d[k]; });
   const ap2d = apTasks.find(function (x) { return x.stepId === "t-2d"; });
@@ -82,7 +91,7 @@ export async function importScenario(t) {
   const devam = imported.map(function (k) { return d[k]; }).find(function (x) { return x.status === "devam"; });
   ok("“devam” açık ve notlu", !!devam && devam.note.indexOf("İmalatta (Excel)") !== -1);
   ok("günlüğe tek satır yazıldı", Object.keys(d).filter(function (k) { return k.startsWith("log/") && d[k].action === "ice-aktarim"; }).length === 1);
-  ok("proje listesine düştü", (await txt("#main")).includes("AYŞE ERDOĞAN") && (await txt("#main tbody")).includes("AP"));
+  ok("proje listesine düştü", (await txt("#main")).includes(src.name) && (await txt("#main tbody")).includes("AP"));
 
   /* ---------- ikinci çalıştırma: kopya yok ---------- */
   await t.click('[data-nav="ayarlar"]'); await t.wait(400);
