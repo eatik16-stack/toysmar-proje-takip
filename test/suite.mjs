@@ -10,6 +10,7 @@ import { priceScenario } from "./price-scenario.mjs";
 import { stepsScenario } from "./steps-scenario.mjs";
 import { visibilityScenario } from "./visibility-scenario.mjs";
 import { purchaseScenario } from "./purchase-scenario.mjs";
+import { importScenario } from "./import-scenario.mjs";
 
 export async function runSuite(t) {
   const ok = t.ok;
@@ -364,6 +365,11 @@ export async function runSuite(t) {
   await t.eval(function () { localStorage.setItem("toysmar.view", "projeler"); });
   await t.goto(APP);
   await purchaseScenario(t);
+
+  t.section("22) Kayıtlar sekmesi, İşlerim bölüm süzgeci, mevcut projeleri içe aktarma");
+  await t.eval(function () { localStorage.setItem("toysmar.view", "projeler"); });
+  await t.goto(APP);
+  await importScenario(t);
 
   const errors = t.errors();
   ok("JS hatası yok", !errors.length, errors.slice(0, 3).join(" | "));

@@ -242,6 +242,35 @@ export async function loadLog(n) {
   return rowsOf(s);
 }
 
+// Proje kartındaki Kayıtlar sekmesi: projeye ve iş emirlerine ait son kayıtlar.
+export async function loadProjectLog(pid) {
+  const ids = {}; ids[pid] = true;
+  data.tasks.forEach(function (t) { if (t.projectId === pid) ids[t.id] = true; });
+  const rows = await loadLog(500);
+  return rows.filter(function (r) { return ids[r.target]; });
+}
+
+// Excel'den çıkarılmış projeleri toplu yazar (js/import.js hazırlar).
+// Her proje: belge + iş emirleri + kilit özeti + muhasebe. Günlüğe tek satır.
+export async function importProjects(items, source) {
+  const f = await fb();
+  let batch = f.writeBatch(f.db), ops = 0, taskCount = 0;
+  const flush = async function () { if (ops) { await batch.commit(); batch = f.writeBatch(f.db); ops = 0; } };
+  for (const it of items) {
+    if (ops > 380) await flush();
+    batch.set(f.doc(f.db, "projects", it.id), it.project); ops++;
+    it.tasks.forEach(function (t) {
+      const body = Object.assign({}, t); delete body.id;
+      batch.set(f.doc(f.db, "tasks", t.id), body); ops++; taskCount++;
+    });
+    batch.set(f.doc(f.db, "locks", it.id), lockPatch(it.tasks), { merge: true }); ops++;
+    batch.set(f.doc(f.db, "accounting", it.id), it.accounting); ops++;
+  }
+  await flush();
+  writeLog("ice-aktarim", "excel", items.length + " proje, " + taskCount + " iş emri aktarıldı" + (source ? " (" + source + ")" : ""));
+  return { projects: items.length, tasks: taskCount };
+}
+
 /* ---------------- yazma ---------------- */
 
 // Kilit özetine yazılan alanlar: kilidin değerlendirmesi için gereken en az bilgi.
