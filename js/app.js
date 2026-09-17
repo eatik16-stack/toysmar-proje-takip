@@ -20,6 +20,7 @@ import { ROLE_ORDER, roleDef } from "./roles.js";
 import { DEFAULT_GROUPS, DEFAULT_DEPTS, DEFAULT_STEPS, DEFAULT_SECTIONS, STEP_TYPES, quoteItemStep, orderStatusLabel } from "./seed.js";
 import { filesOf, uploadTaskFile, archiveFile, storageHint, checkFile } from "./files.js";
 import { lockReasons, isPurchase } from "./locks.js";
+import { parseImportJson, importPlan, buildImport } from "./import.js";
 
 const S = {
   view: lsGet("toysmar.view") || "panel",
@@ -506,6 +507,28 @@ async function loadLogNow() {
   if (S.view === "kayitlar") render();
 }
 
+async function loadProjectLogNow(pid) {
+  S.projLog = { pid: pid, rows: null };
+  try { S.projLog = { pid: pid, rows: await store.loadProjectLog(pid) }; }
+  catch (e) { S.projLog = { pid: pid, rows: [] }; toast("Kayıtlar okunamadı.", "error"); }
+  if (S.view === "proje" && S.projectId === pid) render();
+}
+
+// İçe aktarma: dosya ya da yapıştırılan metin → plan → özet penceresi.
+async function startImport() {
+  const file = (document.getElementById("imp-file") || {}).files;
+  const ta = document.getElementById("imp-json");
+  let text = ta ? ta.value.trim() : "";
+  if (file && file[0]) text = await file[0].text();
+  if (!text) { toast("Önce JSON dosyasını seçin ya da metnini yapıştırın."); return; }
+  try {
+    const json = parseImportJson(text);
+    S.imp = { json: json, codes: {} };
+    S.imp.plan = importPlan(json, S.imp.codes);
+    S.modal = { kind: "projimport", id: String(Date.now()) }; renderModal();
+  } catch (e) { toast((e && e.message) || "JSON okunamadı.", "error"); }
+}
+
 /* ==================== onaylı işlemler ==================== */
 
 function arm(key) {
@@ -658,6 +681,10 @@ function renderModal() {
     title = "Fiyat listesi güncellemesi"; save = "Kataloğu güncelle";
     body = QV.importSummaryHtml(S);
   }
+  else if (m.kind === "projimport") {
+    title = "Mevcut projeleri içe aktar"; save = "İçe aktar";
+    body = S.imp ? V.importSummaryHtml(S.imp.plan, S.imp.json) : "";
+  }
   else if (m.kind === "job") {
     const t = m.id ? byId(data.tasks, m.id) : null;
     if (t) {
@@ -762,6 +789,15 @@ async function saveModal() {
   try {
     if (m.kind === "import") {
       await QA.confirmImport();
+    }
+    else if (m.kind === "projimport") {
+      const items = S.imp ? buildImport(S.imp.json, S.imp.plan) : [];
+      if (!items.length) { toast("Aktarılacak proje yok: hepsi zaten kayıtlı ya da kod bekliyor."); return; }
+      const r = await store.importProjects(items, S.imp.json.source);
+      toast(r.projects + " proje, " + r.tasks + " iş emri aktarıldı.");
+      S.imp = null; S.modal = null;
+      go("projeler");
+      return;
     }
     else if (m.kind === "job") {
       const name = val("name").trim();
@@ -937,7 +973,14 @@ document.addEventListener("click", async function (e) {
     return;
   }
   if ((el = e.target.closest("[data-open-proj]"))) { openProject(el.getAttribute("data-open-proj")); return; }
-  if ((el = e.target.closest("[data-ptab]"))) { S.projTab = el.getAttribute("data-ptab"); render(); return; }
+  if ((el = e.target.closest("[data-ptab]"))) {
+    S.projTab = el.getAttribute("data-ptab"); render();
+    if (S.projTab === "kayitlar") loadProjectLogNow(S.projectId);
+    return;
+  }
+  if ((el = e.target.closest("[data-reloadplog]"))) { await loadProjectLogNow(el.getAttribute("data-reloadplog")); return; }
+  if ((el = e.target.closest("[data-mysection]"))) { S.mySection = el.getAttribute("data-mysection"); render(); return; }
+  if (e.target.closest("[data-impparse]")) { await startImport(); return; }
   if (e.target.closest("[data-filesarch]")) { S.showArchivedFiles = !S.showArchivedFiles; render(); return; }
   if ((el = e.target.closest("[data-filearch]"))) {
     await guard(archiveFile(el.getAttribute("data-filearch"), el.getAttribute("data-on") === "1"));
@@ -1030,6 +1073,13 @@ document.addEventListener("change", async function (e) {
   const t = e.target;
 
   if (t.id === "job-dept") { S.jobDept = t.value; render(); return; }
+  // İçe aktarma özetinde kodu boş projeye kod verilince plan yeniden hesaplanır.
+  if (t.hasAttribute && t.hasAttribute("data-impcode") && S.imp) {
+    S.imp.codes[Number(t.getAttribute("data-impcode"))] = t.value;
+    S.imp.plan = importPlan(S.imp.json, S.imp.codes);
+    S.modal = { kind: "projimport", id: String(Date.now()) }; renderModal();
+    return;
+  }
   // Talep onayında departman değişince bölüm listesi o departmana göre yenilenir.
   if (t.hasAttribute && t.hasAttribute("data-reqdept")) {
     const sec = document.querySelector('[data-reqsection="' + t.getAttribute("data-reqdept") + '"]');
