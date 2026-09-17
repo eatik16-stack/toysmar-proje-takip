@@ -650,10 +650,11 @@ export function viewProject(S) {
         : '<span class="mono">' + esc(p.quoteNo) + '</span>') + '</div></div>' : '') +
     '</div></div>';
 
-  // Sekmeler: iş emirleri ve dosyalar herkese; muhasebe yalnızca yönetici ve muhasebe rolüne.
+  // Sekmeler: iş emirleri, dosyalar ve kayıtlar herkese; muhasebe yalnızca yönetici ve muhasebe rolüne.
   const tabs = [{ id: "isler", label: "İş emirleri", n: ts.length }];
   if (canAccount()) tabs.push({ id: "muhasebe", label: "Muhasebe" });
   tabs.push({ id: "dosyalar", label: "Dosyalar", n: projectFiles(p.id).length });
+  tabs.push({ id: "kayitlar", label: "Kayıtlar" });
   h += '<div class="tabs" role="tablist">' + tabs.map(function (x) {
     return '<button role="tab" aria-selected="' + (tab === x.id) + '" data-ptab="' + x.id + '">' + esc(x.label) +
       (x.n ? ' <span class="mono">' + x.n + '</span>' : '') + '</button>';
@@ -661,6 +662,7 @@ export function viewProject(S) {
 
   if (tab === "muhasebe" && canAccount()) return h + accountingTab(S, p);
   if (tab === "dosyalar") return h + filesTab(S, p, ts);
+  if (tab === "kayitlar") return h + projectLogTab(S, p);
 
   h += '<div class="panel"><div class="panel-head"><h2>İş emirleri</h2>' +
     '<span class="muted"><span class="mono">' + ts.length + '</span> adım</span></div>';
@@ -719,6 +721,22 @@ function filesTab(S, p, ts) {
   return h + '</div>';
 }
 
+// Kayıtlar sekmesi: projeye ve iş emirlerine ait günlük satırları (app.js yükler).
+function projectLogTab(S, p) {
+  const st = S.projLog && S.projLog.pid === p.id ? S.projLog : null;
+  let h = '<div class="panel"><div class="panel-head"><h2>Kayıtlar</h2>' +
+    '<button class="btn btn-sm" data-reloadplog="' + esc(p.id) + '">Yenile</button></div>';
+  if (!st || !st.rows) return h + '<div class="empty"><h3>Yükleniyor…</h3></div></div>';
+  if (!st.rows.length) return h + '<div class="empty"><h3>Kayıt yok</h3><p>Bu projede yapılan her değişiklik burada listelenir.</p></div></div>';
+  h += '<div class="tw"><table><thead><tr><th>Zaman</th><th>Kişi</th><th>İşlem</th><th>Ayrıntı</th></tr></thead><tbody>';
+  st.rows.forEach(function (r) {
+    h += '<tr><td class="mono muted" style="white-space:nowrap">' + esc(fmtDateTime(r.atISO)) + '</td>' +
+      '<td>' + esc(r.byName || r.by || "—") + '</td><td><span class="tag">' + esc(r.action || "—") + '</span></td>' +
+      '<td class="muted">' + esc(r.detail || "") + '</td></tr>';
+  });
+  return h + '</tbody></table></div></div>';
+}
+
 // Muhasebe sekmesi: proje seviyesinde tutar, ödeme ve nakliye/montaj bilgileri.
 // Veri ayrı koleksiyonda (accounting/<pid>); yalnızca yönetici ve muhasebe okur.
 function accountingTab(S, p) {
@@ -746,8 +764,11 @@ function accountingTab(S, p) {
 
 export function viewMyWork(S) {
   const person = mePerson();
+  // Bölümlü departmanda (Üretim Planlama) işler bölüm etiketiyle süzülür.
+  const secs = person && person.dept ? sectionsOf(person.dept) : [];
+  const sec = secs.length ? (S.mySection || "") : "";
   const mine = person
-    ? data.tasks.filter(function (t) { return t.assignee === person.id; })
+    ? data.tasks.filter(function (t) { return t.assignee === person.id && (!sec || (t.section || "") === sec); })
     : [];
   const open = mine.filter(function (t) { return t.status !== "tamam"; })
     .sort(function (a, b) { return String(a.dueDate || "9999").localeCompare(String(b.dueDate || "9999")); });
@@ -756,7 +777,13 @@ export function viewMyWork(S) {
   const late = open.filter(function (t) { const d = daysBetween(t.dueDate); return d !== null && d < 0; }).length;
 
   let h = '<div class="page-head"><div><h1>İşlerim</h1><div class="sub">' +
-    esc(myName()) + (person && person.dept ? " · " + esc(deptName(person.dept)) : "") + '</div></div></div>';
+    esc(myName()) + (person && person.dept ? " · " + esc(deptName(person.dept)) : "") + '</div></div>' +
+    (secs.length
+      ? '<div class="seg" role="group" aria-label="Bölüm süzgeci">' +
+        [{ id: "", name: "Tüm bölümler" }].concat(secs).map(function (s) {
+          return '<button class="' + (sec === s.id ? "on" : "") + '" data-mysection="' + esc(s.id) + '">' + esc(s.name) + '</button>';
+        }).join("") + '</div>'
+      : '') + '</div>';
 
   if (!person) {
     return h + '<div class="banner banner-warn"><span aria-hidden="true">!</span><div>' +
@@ -788,6 +815,7 @@ export function viewMyWork(S) {
       if (!cell) cell = '<span class="muted">—</span>';
       h += '<tr><td class="t-name">' + esc(t.name) +
         (t.urgent ? ' <span class="tag tag-urgent">Acil</span>' : '') +
+        (t.section && secs.length && !sec ? ' <span class="tag">' + esc(sectionName(t.dept, t.section)) + '</span>' : '') +
         (short > 0 && made > 0 ? ' <span class="tag tag-warn">' + made + '/' + need + ' — ' + short + ' eksik</span>' : '') + '</td>' +
         (isJob(t)
           ? '<td><button class="tag tag-job" data-nav="projedisi">Proje dışı</button></td>'
@@ -1061,6 +1089,27 @@ export function viewRequests(S) {
   return h;
 }
 
+// İçe aktarma özeti (pencere gövdesi): proje başına eklenecek / atlanacak / kod bekliyor.
+export function importSummaryHtml(plan, json) {
+  const add = plan.filter(function (r) { return r.action === "ekle"; }).length;
+  const skip = plan.filter(function (r) { return r.action === "atla"; }).length;
+  const nocode = plan.filter(function (r) { return r.action === "kodsuz"; }).length;
+  const LABEL = { ekle: "Eklenecek", atla: "Atlanacak", kodsuz: "Kod bekliyor" };
+  let h = '<p style="margin:0 0 10px">' + esc(json.source ? json.source + " · " : "") + plan.length + ' proje: <strong>' + add + ' eklenecek</strong>, ' +
+    skip + ' atlanacak (kodu zaten var), ' + nocode + ' kod bekliyor.' +
+    (nocode ? ' Kodu boş projelere 2-4 harflik kod yazın; boş bırakılan atlanır.' : '') + '</p>';
+  h += '<div class="tw"><table><thead><tr><th>#</th><th>Proje</th><th>Kod</th><th>İş emri</th><th>Durum</th><th>Not</th></tr></thead><tbody>';
+  plan.forEach(function (r) {
+    h += '<tr><td class="mono muted">' + esc(r.no || "") + '</td><td class="t-name">' + esc(r.name) + '</td>' +
+      '<td>' + (r.codeFromFile ? '<span class="mono">' + esc(r.code) + '</span>'
+        : '<input class="inp-sm mono" style="width:70px; text-transform:uppercase" maxlength="4" data-impcode="' + r.index + '" value="' + esc(r.code) + '" placeholder="AP" aria-label="Proje kodu">') + '</td>' +
+      '<td class="mono muted">' + r.done + '/' + r.taskCount + '</td>' +
+      '<td><span class="tag' + (r.action === "ekle" ? "" : " tag-warn") + '">' + LABEL[r.action] + '</span></td>' +
+      '<td class="muted" style="font-size:12px">' + esc(r.notes.join(" · ")) + '</td></tr>';
+  });
+  return h + '</tbody></table></div>';
+}
+
 const VIEW_LABEL = {
   panel: "Panel", projeler: "Projeler", projedisi: "Proje Dışı İşler", isler: "İşlerim", yeni: "Yeni Proje",
   teklifler: "Teklifler", talepler: "Talepler", kayitlar: "Kayıtlar", ayarlar: "Ayarlar"
@@ -1081,6 +1130,17 @@ export function viewSettings(S) {
       'diğer departmanlar aynı kalır, sizin eklediğiniz departmanlar korunur.</p>' +
       '<button class="btn ' + (armed ? "btn-danger" : "btn-pri") + '" data-confirm="migrate:v2">' +
       (armed ? "Emin misiniz? Geçişi başlat" : "Yeni kataloğa geç") + '</button></div></div>';
+  }
+
+  // Excel'den çıkarılmış mevcut projeler (tools/toysmar-mevcut-projeler.json).
+  if (isAdmin()) {
+    h += '<div class="panel"><div class="panel-head"><h2>Mevcut projeleri içe aktar</h2></div><div class="panel-body">' +
+      '<p class="muted" style="margin:0 0 10px; max-width:70ch; font-size:12.5px">Excel’den çıkarılan ' +
+      '<span class="mono">tools/toysmar-mevcut-projeler.json</span> dosyasını seçin ya da içeriğini yapıştırın. ' +
+      'Önce özet gösterilir; aynı kodlu proje ikinci kez aktarılmaz, kodu boş projelere özet penceresinde kod verirsiniz.</p>' +
+      '<div class="form"><div class="f"><label for="imp-file">Dosya</label><input id="imp-file" type="file" accept=".json,application/json"></div>' +
+      '<div class="f full"><label for="imp-json">ya da JSON metni</label><textarea id="imp-json" placeholder=\'{"projects": [ ... ]}\'></textarea></div></div>' +
+      '<div class="row-actions" style="margin-top:10px"><button class="btn btn-pri" data-impparse="1">Özeti göster</button></div></div></div>';
   }
 
   h += '<div class="grid2"><div style="display:flex; flex-direction:column; gap:16px">';
